@@ -15,6 +15,19 @@ from datasets import get_mnist_streams, get_memory_streams
 from model import MLPModel, LSTMModel
 logger = logging.getLogger('main')
 
+def apply_crop(image, image_shape, patch_shape, location, scale):
+    from crop import LocallySoftRectangularCropper
+    from crop import Gaussian
+    hyperparameters = {}
+    hyperparameters["cutoff"] = 3
+    hyperparameters["batched_window"] = True 
+    cropper = LocallySoftRectangularCropper(
+	patch_shape=patch_shape,
+	hyperparameters=hyperparameters,
+	kernel=Gaussian())
+    patch = cropper.apply(x, image_shape, location, scale) 
+    return patch
+
 
 def setup_model():
     # input_ = T.matrix('features')
@@ -72,7 +85,7 @@ def toyexample(model, batch_size=50, num_epochs=1500):
     location, scale = T.constant(locations[0]), T.constant(scales[0])
 
     cropper = LocallySoftRectangularCropper(patch_shape=(10, 10), hyperparameters=hyperparameters, kernel=Gaussian())
-    #import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
    
     patch = cropper.apply(x, image_shape, location, scale) 
    
@@ -86,7 +99,7 @@ def toyexample(model, batch_size=50, num_epochs=1500):
     plt.savefig('img1.png')
     plt.imshow(res[0,0,:,:], cmap=plt.gray(), interpolation='nearest', vmin=    0, vmax=1)
     plt.savefig('img2.png')
-    import ipdb;ipdb.set_trace()
+  #  import ipdb;ipdb.set_trace()
 
 def train(model, batch_size=50, num_epochs=1500):
     # Setting Loggesetr
