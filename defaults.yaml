@@ -1,0 +1,34 @@
+name: "attention_rnn"
+task_name: "svhn_digit"
+patchmonitor_interval: 100
+shrink_dataset_by: 1
+n_epochs: 100
+batch_size: 100
+hidden_dim: 256
+response_dim: 128
+n_patches: 8
+patch_shape: [8, 8]
+#patch_cnn_spec:
+#    - type: conv
+#      border_mode: full
+#      size: [4, 4]
+#      num_filters: 32
+#    - type: conv
+#      border_mode: full
+#      size: [4, 4]
+#      num_filters: 32
+#    - type: pool
+#      size: [2, 2]
+#      step: [2, 2]
+patch_mlp_spec: [128]
+locate_mlp_spec: [64]
+merge_mlp_spec: [64]
+response_mlp_spec: []
+learning_rate: 0.0001
+batched_window: True
+cutoff: 3
+location_std: 0.1
+scale_std: 0.01
+batch_normalize: False
+batch_normalize_patch: True
+plot_url: null

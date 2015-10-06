@@ -67,3 +67,4 @@ class LSTMModel():
             brick.weights_init = IsotropicGaussian(0.01)
             brick.biases_init = Constant(0)
             brick.initialize()
+
