@@ -117,3 +117,17 @@ class Glorot(NdarrayInitialization):
     def generate(self, rng, shape):
         m = self.rng.randn(self.in_dim, self.out_dim) / np.sqrt(self.in_dim)
         return m.astype(theano.config.floatX)
+
+
+def apply_crop(image, image_shape, patch_shape, location, scale):
+    from crop import LocallySoftRectangularCropper
+    from crop import Gaussian
+    hyperparameters = {}
+    hyperparameters["cutoff"] = 3
+    hyperparameters["batched_window"] = True
+    cropper = LocallySoftRectangularCropper(
+        patch_shape=patch_shape,
+        hyperparameters=hyperparameters,
+        kernel=Gaussian())
+    patch = cropper.apply(image, image_shape, location, scale)
+    return patch

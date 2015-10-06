@@ -15,19 +15,6 @@ from datasets import get_mnist_streams, get_memory_streams
 from model import MLPModel, LSTMModel
 logger = logging.getLogger('main')
 
-def apply_crop(image, image_shape, patch_shape, location, scale):
-    from crop import LocallySoftRectangularCropper
-    from crop import Gaussian
-    hyperparameters = {}
-    hyperparameters["cutoff"] = 3
-    hyperparameters["batched_window"] = True 
-    cropper = LocallySoftRectangularCropper(
-	patch_shape=patch_shape,
-	hyperparameters=hyperparameters,
-	kernel=Gaussian())
-    patch = cropper.apply(x, image_shape, location, scale) 
-    return patch
-
 
 def setup_model():
     # input_ = T.matrix('features')
@@ -40,7 +27,7 @@ def setup_model():
 
     return model
 def toyexample(model, batch_size=50, num_epochs=1500):
-	# Setting Loggesetr
+    # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
     save_path = 'results/memory_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
@@ -170,6 +157,6 @@ def evaluate(model, load_path):
             param.set_value(loaded[param_name])
 
 if __name__ == "__main__":
-    	logging.basicConfig(level=logging.INFO)
-    	model = setup_model()
+        logging.basicConfig(level=logging.INFO)
+        model = setup_model()
         toyexample(model) 
