@@ -6,16 +6,23 @@ from blocks.recurrent import BaseRecurrent, recurrent
 import theano.tensor as tensor
 
 
-class LSTM(BaseRecurrent, Initializable):
+class LSTMAttention(BaseRecurrent, Initializable):
     @lazy(allocation=['dim'])
-    def __init__(self, dim, activation=None, **kwargs):
-        super(LSTM, self).__init__(**kwargs)
+    def __init__(self, input_dim, dim, mlp_hidden_dims, activation=None, **kwargs):
+        super(LSTMAttention, self).__init__(**kwargs)
         self.dim = dim
+	self.input_dim = input_dim
+	non_lins = [Rectifier()] * len(mlp_hidden_dims)+ [None]
+	mlp_dims = [input_dim + dim ]+ mlp_hidden_dims
+        mlp = MLP(non_lins, mlp_dims,
+                  weights_init=self.weights_init,
+                  biases_init=self.biases_init,
+                  name=self.name)
 
         if not activation:
             activation = Tanh()
-        self.children = [activation]
-
+        self.children = [activation, mlp]
+     
     def get_dim(self, name):
         if name == 'inputs':
             return self.dim * 4
@@ -23,9 +30,13 @@ class LSTM(BaseRecurrent, Initializable):
             return self.dim
         if name == 'mask':
             return 0
-        return super(LSTM, self).get_dim(name)
+        return super(LSTMAttention, self).get_dim(name)
 
     def _allocate(self):
+		
+        self.W_input = shared_floatx_nans((self.input_dim, 4 * self.dim),
+                                          name='W_input')
+        
         self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
                                           name='W_state')
         self.W_cell_to_in = shared_floatx_nans((self.dim,),
@@ -41,6 +52,7 @@ class LSTM(BaseRecurrent, Initializable):
         self.initial_cells = shared_floatx_zeros((self.dim,),
                                                  name="initial_cells")
         add_role(self.W_state, WEIGHT)
+        add_role(self.W_input, WEIGHT)	
         add_role(self.W_cell_to_in, WEIGHT)
         add_role(self.W_cell_to_forget, WEIGHT)
         add_role(self.W_cell_to_out, WEIGHT)
@@ -48,12 +60,13 @@ class LSTM(BaseRecurrent, Initializable):
         add_role(self.initial_cells, INITIAL_STATE)
 
         self.parameters = [
-            self.W_state, self.W_cell_to_in, self.W_cell_to_forget,
+            self.W_state, self.W_cell_to_in, self.W_cell_to_forget, self.W_input,
             self.W_cell_to_out, self.initial_state_, self.initial_cells]
 
     def _initialize(self):
-        for weights in self.parameters[:4]:
+        for weights in self.parameters[:5]:
             self.weights_init.initialize(weights, self.rng)
+        self.children[1].initialize()
 
     @recurrent(sequences=['inputs', 'mask'], states=['states', 'cells'],
                contexts=[], outputs=['states', 'cells'])
@@ -62,8 +75,16 @@ class LSTM(BaseRecurrent, Initializable):
             return x[:, no * self.dim: (no + 1) * self.dim]
 
         nonlinearity = self.children[0].apply
+        mlp = self.children[1]
+        mlp_output = mlp.apply(tensor.concatenate([inputs, states],axis = 1 ))
+	x_position = mlp_output[:,0]
+	y_position = mlp_output[:,1]
+	scale = mlp_output[:,2]
 
-        activation = tensor.dot(states, self.W_state) + inputs
+# where we are
+
+        transformed_inputs = tensor.dot(inputs, self.W_input)
+        activation = tensor.dot(states, self.W_state) + transformed_inputs
         in_gate = tensor.nnet.sigmoid(slice_last(activation, 0) +
                                       cells * self.W_cell_to_in)
         forget_gate = tensor.nnet.sigmoid(slice_last(activation, 1) +
