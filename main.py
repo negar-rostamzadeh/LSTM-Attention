@@ -5,13 +5,18 @@ import numpy as np
 import theano.tensor as T
 from blocks.algorithms import GradientDescent, Adam
 from blocks.extensions import FinishAfter, Printing
+from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
 from blocks.extensions.monitoring import (TrainingDataMonitoring,
                                           DataStreamMonitoring)
+from blocks.bricks import Rectifier, Softmax, MLP
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams
-from datasets import get_memory_streams
-from model import LSTMModel
+from datasets import get_mnist_video_streams
+from blocks.graph import ComputationGraph
+from blocks.initialization import IsotropicGaussian, Constant
+# from model import LSTMModel
+from LSTM_attention_model import LSTMAttention
 logger = logging.getLogger('main')
 
 
@@ -20,13 +25,28 @@ def setup_model():
     input_ = T.tensor3('features')
     # shape: B
     target = T.lvector('targets')
-    model = LSTMModel()
-    model.apply(input_, target)
+    model = LSTMAttention(input_dim=10000, dim=500,
+                          mlp_hidden_dims=[2000, 500, 4],
+                          batch_size=100,
+                          image_shape=(100, 100),
+                          patch_shape=(28, 28),
+                          weights_init=IsotropicGaussian(0.01),
+                          biases_init=Constant(0))
+    model.initialize()
+    h, c = model.apply(input_)
+    classifier = MLP([Rectifier(), Softmax()], [500, 100, 10],
+                     weights_init=IsotropicGaussian(0.01),
+                     biases_init=Constant(0))
+    classifier.initialize()
 
-    return model
+    probabilities = classifier.apply(h[-1])
+    cost = CategoricalCrossEntropy().apply(target, probabilities)
+    error_rate = MisclassificationRate().apply(target, probabilities)
+
+    return cost, error_rate
 
 
-def train(model, batch_size=100, num_epochs=150):
+def train(cost, error_rate, batch_size=100, num_epochs=150):
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
     save_path = 'results/memory_' + timestr
@@ -37,26 +57,25 @@ def train(model, batch_size=100, num_epochs=150):
     logger.addHandler(fh)
 
     # Training
-    cost = model.outputs['cost']
     blocks_model = Model(cost)
     all_params = blocks_model.parameters
     print "Number of found parameters:" + str(len(all_params))
     print all_params
 
     training_algorithm = GradientDescent(
-        cost=cost, params=all_params,
-        step_rule=Adam(learning_rate=model.default_lr))
+        cost=cost, parameters=all_params,
+        step_rule=Adam(learning_rate=0.001))
 
     # training_algorithm = GradientDescent(
     #     cost=cost, params=all_params,
     #     step_rule=Scale(learning_rate=model.default_lr))
 
-    monitored_variables = [cost]
+    monitored_variables = [cost, error_rate]
 
     # the rest is for validation
     # train_data_stream, valid_data_stream = get_mnist_streams(
     #     50000, batch_size)
-    train_data_stream, valid_data_stream = get_memory_streams(20, 10)
+    train_data_stream, valid_data_stream = get_mnist_video_streams(batch_size)
 
     train_monitoring = TrainingDataMonitoring(
         variables=monitored_variables,
@@ -96,5 +115,5 @@ def evaluate(model, load_path):
 
 if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
-        model = setup_model()
-        train(model)
+        cost, error_rate = setup_model()
+        train(cost, error_rate)
