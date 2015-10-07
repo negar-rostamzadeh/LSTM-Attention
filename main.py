@@ -4,7 +4,7 @@ import time
 import numpy as np
 import theano.tensor as T
 from blocks.algorithms import GradientDescent, Adam
-from blocks.extensions import FinishAfter, Printing
+from blocks.extensions import FinishAfter, Printing, ProgressBar
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
 from blocks.extensions.monitoring import (TrainingDataMonitoring,
                                           DataStreamMonitoring)
@@ -96,8 +96,9 @@ def train(cost, error_rate, batch_size=100, num_epochs=150):
             train_monitoring,
             valid_monitoring,
             FinishAfter(after_n_epochs=num_epochs),
-            SaveParams('valid_MSE', blocks_model, save_path),
+	    SaveParams('valid_misclassificationrate_apply_error_rate', blocks_model, save_path),
             SaveLog(save_path, after_epoch=True),
+	    ProgressBar(),
             Printing()])
     main_loop.run()
 
