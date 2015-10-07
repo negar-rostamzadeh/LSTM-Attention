@@ -4,14 +4,16 @@ from blocks.roles import add_role, WEIGHT, INITIAL_STATE
 from blocks.utils import shared_floatx_nans, shared_floatx_zeros
 from blocks.recurrent import BaseRecurrent, recurrent
 import theano.tensor as tensor
-
+import numpy as np
 
 class LSTMAttention(BaseRecurrent, Initializable):
     @lazy(allocation=['dim'])
-    def __init__(self, input_dim, dim, mlp_hidden_dims, activation=None, **kwargs):
+    def __init__(self, input_dim, dim, mlp_hidden_dims,
+		 image_shape, patch_shape, activation=None, **kwargs):
         super(LSTMAttention, self).__init__(**kwargs)
         self.dim = dim
-	self.input_dim = input_dim
+	self.image_shape = image_shape
+	self.patch_shape = patch_shape
 	non_lins = [Rectifier()] * len(mlp_hidden_dims)+ [None]
 	mlp_dims = [input_dim + dim ]+ mlp_hidden_dims
         mlp = MLP(non_lins, mlp_dims,
@@ -34,7 +36,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
 
     def _allocate(self):
 		
-        self.W_input = shared_floatx_nans((self.input_dim, 4 * self.dim),
+        self.W_patch = shared_floatx_nans((np.prod(self.patch_shape), 4 * self.dim),
                                           name='W_input')
         
         self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
@@ -52,7 +54,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.initial_cells = shared_floatx_zeros((self.dim,),
                                                  name="initial_cells")
         add_role(self.W_state, WEIGHT)
-        add_role(self.W_input, WEIGHT)	
+        add_role(self.W_patch, WEIGHT)	
         add_role(self.W_cell_to_in, WEIGHT)
         add_role(self.W_cell_to_forget, WEIGHT)
         add_role(self.W_cell_to_out, WEIGHT)
@@ -60,7 +62,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         add_role(self.initial_cells, INITIAL_STATE)
 
         self.parameters = [
-            self.W_state, self.W_cell_to_in, self.W_cell_to_forget, self.W_input,
+            self.W_state, self.W_cell_to_in, self.W_cell_to_forget, self.W_patch,
             self.W_cell_to_out, self.initial_state_, self.initial_cells]
 
     def _initialize(self):
@@ -77,14 +79,18 @@ class LSTMAttention(BaseRecurrent, Initializable):
         nonlinearity = self.children[0].apply
         mlp = self.children[1]
         mlp_output = mlp.apply(tensor.concatenate([inputs, states],axis = 1 ))
-	x_position = mlp_output[:,0]
-	y_position = mlp_output[:,1]
-	scale = mlp_output[:,2]
-
-# where we are
-
-        transformed_inputs = tensor.dot(inputs, self.W_input)
-        activation = tensor.dot(states, self.W_state) + transformed_inputs
+	location = mlp_output[:,0:2]
+	scale = mlp_output[:,2:4]
+	
+        patch = apply_crop(image=inputs.reshape(self.image_shape),
+		  	   image_shape=self.image_shape,
+			   patch_shape=self.patch_shape,
+			   location=location,
+			   scale=scale)
+        patch = patch.reshape(np.prod(patch_shape))
+        transformed_patch = tensor.dot(patch, self.W_patch)
+	
+        activation = tensor.dot(states, self.W_state) + transformed_patch
         in_gate = tensor.nnet.sigmoid(slice_last(activation, 0) +
                                       cells * self.W_cell_to_in)
         forget_gate = tensor.nnet.sigmoid(slice_last(activation, 1) +
