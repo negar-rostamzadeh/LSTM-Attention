@@ -22,6 +22,7 @@ class MLPModel():
                   biases_init=Constant(0),
                   name=self.name)
         mlp.initialize()
+        import ipdb; ipdb.set_trace()
         probs = mlp.apply(T.flatten(input_, outdim=2))
         probs.name = 'probs'
         cost = CategoricalCrossEntropy().apply(target.flatten(), probs)

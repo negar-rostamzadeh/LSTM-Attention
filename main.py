@@ -13,9 +13,7 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams
 from datasets import get_mnist_video_streams
-from blocks.graph import ComputationGraph
 from blocks.initialization import IsotropicGaussian, Constant
-# from model import LSTMModel
 from LSTM_attention_model import LSTMAttention
 logger = logging.getLogger('main')
 
@@ -25,15 +23,15 @@ def setup_model():
     input_ = T.tensor3('features')
     # shape: B
     target = T.lvector('targets')
-    model = LSTMAttention(input_dim=10000, dim=500,
-                          mlp_hidden_dims=[2000, 500, 4],
+    model = LSTMAttention(dim=500,
+                          mlp_hidden_dims=[400, 4],
                           batch_size=100,
                           image_shape=(100, 100),
                           patch_shape=(28, 28),
                           weights_init=IsotropicGaussian(0.01),
                           biases_init=Constant(0))
     model.initialize()
-    h, c = model.apply(input_)
+    h, c, location, scale = model.apply(input_)
     classifier = MLP([Rectifier(), Softmax()], [500, 100, 10],
                      weights_init=IsotropicGaussian(0.01),
                      biases_init=Constant(0))
@@ -43,10 +41,32 @@ def setup_model():
     cost = CategoricalCrossEntropy().apply(target, probabilities)
     error_rate = MisclassificationRate().apply(target, probabilities)
 
-    return cost, error_rate
+    location_x_avg = T.mean(location[:, 0], axis=0)
+    location_x_avg.name = 'location_x_avg'
+    location_y_avg = T.mean(location[:, 1], axis=0)
+    location_y_avg.name = 'location_y_avg'
+    scale_x_avg = T.mean(scale[:, 0], axis=0)
+    scale_x_avg.name = 'scale_x_avg'
+    scale_y_avg = T.mean(scale[:, 1], axis=0)
+    scale_y_avg.name = 'scale_y_avg'
+
+    location_x_std = T.std(location[:, 0], axis=0)
+    location_x_std.name = 'location_x_std'
+    location_y_std = T.std(location[:, 1], axis=0)
+    location_y_std.name = 'location_y_std'
+    scale_x_std = T.std(scale[:, 0], axis=0)
+    scale_x_std.name = 'scale_x_std'
+    scale_y_std = T.std(scale[:, 1], axis=0)
+    scale_y_std.name = 'scale_y_std'
+
+    monitorings = [error_rate,
+                   location_x_avg, location_y_avg, scale_x_avg, scale_y_avg,
+                   location_x_std, location_y_std, scale_x_std, scale_y_std]
+
+    return cost, monitorings
 
 
-def train(cost, error_rate, batch_size=100, num_epochs=150):
+def train(cost, monitorings, batch_size=100, num_epochs=150):
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
     save_path = 'results/memory_' + timestr
@@ -66,15 +86,7 @@ def train(cost, error_rate, batch_size=100, num_epochs=150):
         cost=cost, parameters=all_params,
         step_rule=Adam(learning_rate=0.001))
 
-    # training_algorithm = GradientDescent(
-    #     cost=cost, params=all_params,
-    #     step_rule=Scale(learning_rate=model.default_lr))
-
-    monitored_variables = [cost, error_rate]
-
-    # the rest is for validation
-    # train_data_stream, valid_data_stream = get_mnist_streams(
-    #     50000, batch_size)
+    monitored_variables = [cost] + monitorings
     train_data_stream, valid_data_stream = get_mnist_video_streams(batch_size)
 
     train_monitoring = TrainingDataMonitoring(
@@ -96,9 +108,10 @@ def train(cost, error_rate, batch_size=100, num_epochs=150):
             train_monitoring,
             valid_monitoring,
             FinishAfter(after_n_epochs=num_epochs),
-	    SaveParams('valid_misclassificationrate_apply_error_rate', blocks_model, save_path),
+            SaveParams('valid_misclassificationrate_apply_error_rate',
+                       blocks_model, save_path),
             SaveLog(save_path, after_epoch=True),
-	    ProgressBar(),
+            ProgressBar(),
             Printing()])
     main_loop.run()
 
@@ -116,5 +129,5 @@ def evaluate(model, load_path):
 
 if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
-        cost, error_rate = setup_model()
-        train(cost, error_rate)
+        cost, monitorings = setup_model()
+        train(cost, monitorings)

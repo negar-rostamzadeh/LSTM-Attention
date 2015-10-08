@@ -53,14 +53,14 @@ class SaveParams(SimpleExtension):
         super(SaveParams, self).__init__(**kwargs)
         self.early_stop_var = early_stop_var
         self.save_path = save_path
-        params_dicts = model.params
+        params_dicts = model.get_parameter_dict()
         self.params_names = params_dicts.keys()
         self.params_values = params_dicts.values()
         self.to_save = {}
         self.best_value = None
-        self.add_condition('after_training', self.save)
-        self.add_condition('on_interrupt', self.save)
-        self.add_condition('after_epoch', self.do)
+        self.add_condition(('after_training',), self.save)
+        self.add_condition(('on_interrupt',), self.save)
+        self.add_condition(('after_epoch',), self.do)
 
     def save(self, which_callback, *args):
         to_save = {}
@@ -118,16 +118,3 @@ class Glorot(NdarrayInitialization):
         m = self.rng.randn(self.in_dim, self.out_dim) / np.sqrt(self.in_dim)
         return m.astype(theano.config.floatX)
 
-
-def apply_crop(image, image_shape, patch_shape, location, scale):
-    from crop import LocallySoftRectangularCropper
-    from crop import Gaussian
-    hyperparameters = {}
-    hyperparameters["cutoff"] = 3
-    hyperparameters["batched_window"] = True
-    cropper = LocallySoftRectangularCropper(
-        patch_shape=patch_shape,
-        hyperparameters=hyperparameters,
-        kernel=Gaussian())
-    patch = cropper.apply(image, image_shape, location, scale)
-    return patch
