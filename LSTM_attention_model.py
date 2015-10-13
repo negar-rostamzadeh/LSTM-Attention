@@ -1,6 +1,6 @@
 from blocks.bricks import Initializable, Tanh, Rectifier, MLP
 from blocks.bricks.base import application, lazy
-from blocks.roles import add_role, WEIGHT, INITIAL_STATE
+from blocks.roles import add_role, WEIGHT, BIAS, INITIAL_STATE
 from blocks.utils import shared_floatx_nans, shared_floatx_zeros
 from blocks.bricks.recurrent import BaseRecurrent, recurrent
 import theano.tensor as tensor
@@ -53,14 +53,9 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.W_patch = shared_floatx_nans((np.prod(self.patch_shape) + 4,
                                            4 * self.dim),
                                           name='W_input')
+        self.b = shared_floatx_nans((4 * self.dim,), name='b')
         self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
                                           name='W_state')
-        self.W_cell_to_in = shared_floatx_nans((self.dim,),
-                                               name='W_cell_to_in')
-        self.W_cell_to_forget = shared_floatx_nans((self.dim,),
-                                                   name='W_cell_to_forget')
-        self.W_cell_to_out = shared_floatx_nans((self.dim,),
-                                                name='W_cell_to_out')
         # The underscore is required to prevent collision with
         # the `initial_state` application method
         self.initial_state_ = shared_floatx_zeros((self.dim,),
@@ -72,23 +67,21 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.initial_scale = shared_floatx_zeros((2,),
                                                  name="initial_scale")
         add_role(self.W_state, WEIGHT)
+        add_role(self.b, BIAS)
         add_role(self.W_patch, WEIGHT)
-        add_role(self.W_cell_to_in, WEIGHT)
-        add_role(self.W_cell_to_forget, WEIGHT)
-        add_role(self.W_cell_to_out, WEIGHT)
         add_role(self.initial_state_, INITIAL_STATE)
         add_role(self.initial_cells, INITIAL_STATE)
         add_role(self.initial_location, INITIAL_STATE)
         add_role(self.initial_scale, INITIAL_STATE)
 
         self.parameters = [
-            self.W_state, self.W_cell_to_in, self.W_cell_to_forget,
-            self.W_patch, self.W_cell_to_out, self.initial_state_,
+            self.W_state, self.W_patch, self.b, self.initial_state_,
             self.initial_cells, self.initial_location, self.initial_scale]
 
     def _initialize(self):
-        for weights in self.parameters[:5]:
+        for weights in self.parameters[:2]:
             self.weights_init.initialize(weights, self.rng)
+        self.biases_init.initialize(self.parameters[2], self.rng)
         self.children[1].initialize()
 
     @recurrent(sequences=['inputs', 'mask'],
@@ -107,19 +100,22 @@ class LSTMAttention(BaseRecurrent, Initializable):
             np.array([list(self.image_shape)]),
             tensor.constant(
                 (self.batch_size *
-                    [[self.patch_shape[0] / 2,
-                     self.patch_shape[1] / 2]])).astype('float32'),
+                    [[self.image_shape[0] / 2,
+                     self.image_shape[1] / 2]])).astype('float32'),
             self.batch_size * tensor.constant(
                 [[self.rescaling_factor, ] * 2]).astype('float32'))
         downn_sampled_input = downn_sampled_input.flatten(ndim=2)
 
-        # rescaling back we we want to feed it back to MLP.
+        # rescaling back we want to feed it back to MLP.
         location = (location * 2 / self.image_shape[0]) - 1
         scale = scale - self.min_scale - 1
         mlp_output = mlp.apply(tensor.concatenate(
             [downn_sampled_input, location, scale, states], axis=1))
         # To range the location between 0 and image_shape
         location = (mlp_output[:, 0:2] + 1) * self.image_shape[0] / 2
+        # Relative location
+        # location = (location +
+        #             mlp_output[:, 0:2] + 1) * self.image_shape[0] / 2
         location.name = 'location'
         # To range the scale between its min and max values
         scale = (mlp_output[:, 2:4] + 1) + self.min_scale
@@ -133,17 +129,16 @@ class LSTMAttention(BaseRecurrent, Initializable):
 
         patch = tensor.concatenate([patch.flatten(ndim=2), location, scale],
                                    axis=1)
-        transformed_patch = tensor.dot(patch, self.W_patch)
+        transformed_patch = tensor.dot(patch, self.W_patch) + self.b
 
         activation = tensor.dot(states, self.W_state) + transformed_patch
-        in_gate = tensor.nnet.sigmoid(slice_last(activation, 0) +
-                                      cells * self.W_cell_to_in)
-        forget_gate = tensor.nnet.sigmoid(slice_last(activation, 1) +
-                                          cells * self.W_cell_to_forget)
+        in_gate = tensor.nnet.sigmoid(slice_last(activation, 0))
+        forget_gate_input = slice_last(activation, 1)
+        forget_gate = tensor.nnet.sigmoid(forget_gate_input +
+                                          tensor.ones_like(forget_gate_input))
         next_cells = (forget_gate * cells +
                       in_gate * nonlinearity(slice_last(activation, 2)))
-        out_gate = tensor.nnet.sigmoid(slice_last(activation, 3) +
-                                       next_cells * self.W_cell_to_out)
+        out_gate = tensor.nnet.sigmoid(slice_last(activation, 3))
         next_states = out_gate * nonlinearity(next_cells)
 
         if mask:

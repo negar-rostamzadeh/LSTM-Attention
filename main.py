@@ -11,10 +11,11 @@ from blocks.extensions.monitoring import (TrainingDataMonitoring,
 from blocks.bricks import Rectifier, Softmax, MLP
 from blocks.main_loop import MainLoop
 from blocks.model import Model
-from utils import SaveLog, SaveParams
+from utils import SaveLog, SaveParams, Glorot
 from datasets import get_mnist_video_streams
-from blocks.initialization import IsotropicGaussian, Constant
+from blocks.initialization import Constant
 from LSTM_attention_model import LSTMAttention
+from blocks.monitoring import aggregation
 logger = logging.getLogger('main')
 
 
@@ -28,12 +29,12 @@ def setup_model():
                           batch_size=100,
                           image_shape=(100, 100),
                           patch_shape=(28, 28),
-                          weights_init=IsotropicGaussian(0.01),
+                          weights_init=Glorot(),
                           biases_init=Constant(0))
     model.initialize()
     h, c, location, scale = model.apply(input_)
     classifier = MLP([Rectifier(), Softmax()], [500, 100, 10],
-                     weights_init=IsotropicGaussian(0.01),
+                     weights_init=Glorot(),
                      biases_init=Constant(0))
     classifier.initialize()
 
@@ -66,10 +67,10 @@ def setup_model():
     return cost, monitorings
 
 
-def train(cost, monitorings, batch_size=100, num_epochs=150):
+def train(cost, monitorings, batch_size=100, num_epochs=500):
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/memory_' + timestr
+    save_path = 'results/mnist100x100_lr_10_4_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -84,9 +85,9 @@ def train(cost, monitorings, batch_size=100, num_epochs=150):
 
     training_algorithm = GradientDescent(
         cost=cost, parameters=all_params,
-        step_rule=Adam(learning_rate=0.001))
+        step_rule=Adam(learning_rate=0.0001))
 
-    monitored_variables = [cost] + monitorings
+    monitored_variables = [cost, aggregation.mean(training_algorithm.total_gradient_norm)] + monitorings
     train_data_stream, valid_data_stream = get_mnist_video_streams(batch_size)
 
     train_monitoring = TrainingDataMonitoring(
