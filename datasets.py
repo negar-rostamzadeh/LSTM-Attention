@@ -61,10 +61,12 @@ class PreprocessTransformer(Transformer):
     def get_data(self, request=None):
         data = next(self.child_epoch_iterator)
         transformed_data = []
-        B, T, X, Y, C = data[0].shape
+        normed_feat = data[0] / 255.0
+        normed_feat = normed_feat.astype('float32')
+        B, T, X, Y, C = normed_feat.shape
         transformed_data.append(
             numpy.swapaxes(
-                data[0].reshape(
+                normed_feat.reshape(
                     (B, T, X * Y * C)),
                 0, 1))
         # Now the data shape should be T x B x F
