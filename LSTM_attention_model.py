@@ -52,7 +52,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
     def _allocate(self):
         self.W_patch = shared_floatx_nans((np.prod(self.patch_shape) + 4,
                                            4 * self.dim),
-                                          name='W_input')
+                                          name='W_patch')
         self.b = shared_floatx_nans((4 * self.dim,), name='b')
         self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
                                           name='W_state')
