@@ -110,13 +110,13 @@ def apply_act(input, act_name):
 
 class Glorot(NdarrayInitialization):
     def generate(self, rng, shape):
-        # In the case of diagonal matrix, we initialize the diagonal
-        # to zero. This may happen in LSTM for the weights from cell
-        # to gates.
-        if len(shape) == 1:
-            m = np.zeros(shape=shape)
-        else:
-            input_size, output_size = shape
-            high = np.sqrt(6) / np.sqrt(input_size + output_size)
-            m = rng.uniform(-high, high, size=shape)
+        input_size, output_size = shape
+        high = np.sqrt(6) / np.sqrt(input_size + output_size)
+        m = rng.uniform(-high, high, size=shape)
+        if shape == (500, 2000):
+            mi = rng.uniform(-0.07, 0.07, size=(500, 500))
+            mf = rng.uniform(-0.07, 0.07, size=(500, 500))
+            mc = np.identity(500) * 0.99
+            mo = rng.uniform(-0.07, 0.07, size=(500, 500))
+            m = np.hstack([mi, mf, mc, mo])
         return m.astype(theano.config.floatX)
