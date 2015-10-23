@@ -4,7 +4,7 @@ import time
 import numpy as np
 import theano.tensor as T
 import theano
-from blocks.algorithms import (GradientDescent, Adam,
+from blocks.algorithms import (GradientDescent, Adam, Momentum,
                                CompositeRule, StepClipping)
 from blocks.extensions import FinishAfter, Printing, ProgressBar
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
@@ -13,9 +13,10 @@ from blocks.extensions.monitoring import (TrainingDataMonitoring,
 from blocks.bricks import Rectifier, Softmax, MLP
 from blocks.main_loop import MainLoop
 from blocks.model import Model
-from utils import SaveLog, SaveParams, Glorot
+from utils import SaveLog, SaveParams, Glorot, visualize_attention
 from datasets import get_mnist_video_streams
 from blocks.initialization import Constant
+from blocks.graph import ComputationGraph
 from LSTM_attention_model import LSTMAttention
 from blocks.monitoring import aggregation
 floatX = theano.config.floatX
@@ -27,24 +28,27 @@ def setup_model():
     input_ = T.tensor3('features')
     # shape: B
     target = T.lvector('targets')
-    model = LSTMAttention(dim=500,
-                          mlp_hidden_dims=[400, 4],
+    model = LSTMAttention(dim=256,
+                          mlp_hidden_dims=[200, 4],
                           batch_size=100,
                           image_shape=(100, 100),
-                          patch_shape=(28, 28),
+                          patch_shape=(16, 16),
                           weights_init=Glorot(),
                           biases_init=Constant(0))
     model.initialize()
     h, c, location, scale = model.apply(input_)
-    classifier = MLP([Rectifier(), Softmax()], [500, 100, 10],
+    classifier = MLP([Rectifier(), Softmax()], [256, 100, 10],
                      weights_init=Glorot(),
                      biases_init=Constant(0))
     model.h = h
+    model.location = location
+    model.scale = scale
     classifier.initialize()
 
     probabilities = classifier.apply(h[-1])
     cost = CategoricalCrossEntropy().apply(target, probabilities)
     error_rate = MisclassificationRate().apply(target, probabilities)
+    model.cost = cost
 
     location_x_avg = T.mean(location[:, 0])
     location_x_avg.name = 'location_x_avg'
@@ -67,14 +71,17 @@ def setup_model():
     monitorings = [error_rate,
                    location_x_avg, location_y_avg, scale_x_avg, scale_y_avg,
                    location_x_std, location_y_std, scale_x_std, scale_y_std]
+    model.monitorings = monitorings
 
-    return cost, monitorings
+    return model
 
 
-def train(cost, monitorings, batch_size=100, num_epochs=500):
+def train(model, batch_size=100, num_epochs=500):
+    cost = model.cost
+    monitorings = model.monitorings
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/test_' + timestr
+    save_path = 'results/test_cont_adam_lr_m6_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -100,8 +107,14 @@ def train(cost, monitorings, batch_size=100, num_epochs=500):
     #     print str(e1) + ": " + str(e2)
     # import ipdb; ipdb.set_trace()
 
-    clipping = StepClipping(threshold=np.cast[floatX](20))
-    adam = Adam(learning_rate=0.0001)
+    clipping = StepClipping(threshold=np.cast[floatX](10))
+
+    # sgd_momentum = Momentum(
+    #     learning_rate=0.0001,
+    #     momentum=0.95)
+    # step_rule = CompositeRule([clipping, sgd_momentum])
+
+    adam = Adam(learning_rate=0.000001)
     step_rule = CompositeRule([adam, clipping])
     training_algorithm = GradientDescent(
         cost=cost, parameters=all_params,
@@ -153,15 +166,32 @@ def train(cost, monitorings, batch_size=100, num_epochs=500):
 def evaluate(model, load_path):
     with open(load_path + '/trained_params_best.npz') as f:
         loaded = np.load(f)
-        blocks_model = Model(model)
+        blocks_model = Model(model.cost)
         params_dicts = blocks_model.get_parameter_dict()
         params_names = params_dicts.keys()
         for param_name in params_names:
-            param = params_dicts[param_name]
-            assert param.get_value().shape == loaded[param_name].shape
-            param.set_value(loaded[param_name])
+                    param = params_dicts[param_name]
+                    # '/f_6_.W' --> 'f_6_.W'
+                    slash_index = param_name.find('/')
+                    param_name = param_name[slash_index + 1:]
+                    assert param.get_value().shape == loaded[param_name].shape
+                    param.set_value(loaded[param_name])
+
+    train_data_stream, valid_data_stream = get_mnist_video_streams(100)
+    # T x B x F
+    data = train_data_stream.get_epoch_iterator().next()
+    cg = ComputationGraph(model.cost)
+    f = theano.function(cg.inputs, [model.location, model.scale],
+                        on_unused_input='ignore',
+                        allow_input_downcast=True)
+    res = f(data[1], data[0])
+    for i in range(10):
+        visualize_attention(data[0][:, i, :],
+                            res[0][:, i, :], res[1][:, i, :], prefix=str(i))
+    import ipdb; ipdb.set_trace()
 
 if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
-        cost, monitorings = setup_model()
-        train(cost, monitorings)
+        model = setup_model()
+        evaluate(model, 'results/test_cont_adam_lr_m5_2015_10_18_at_15_35')
+        # train(model)
