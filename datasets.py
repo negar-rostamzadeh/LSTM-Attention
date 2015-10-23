@@ -63,6 +63,7 @@ class PreprocessTransformer(Transformer):
         transformed_data = []
         normed_feat = data[0] / 255.0
         normed_feat = normed_feat.astype('float32')
+        normed_feat = normed_feat[:, 5:15]
         B, T, X, Y, C = normed_feat.shape
         transformed_data.append(
             numpy.swapaxes(
