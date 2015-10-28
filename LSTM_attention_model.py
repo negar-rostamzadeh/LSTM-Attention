@@ -19,7 +19,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.patch_shape = patch_shape
         self.batch_size = batch_size
         non_lins = [Rectifier()] * (len(mlp_hidden_dims) - 1) + [Tanh()]
-        mlp_dims = [np.prod(patch_shape) + dim + 4] + mlp_hidden_dims
+        mlp_dims = [np.prod(patch_shape) + 2 * dim + 4] + mlp_hidden_dims
         mlp = MLP(non_lins, mlp_dims,
                   weights_init=self.weights_init,
                   biases_init=self.biases_init,
@@ -36,7 +36,8 @@ class LSTMAttention(BaseRecurrent, Initializable):
 
         if not activation:
             activation = Tanh()
-        self.children = [activation, mlp, cropper]
+        relu = Rectifier()
+        self.children = [activation, mlp, cropper, relu]
 
     def get_dim(self, name):
         if name == 'inputs':
@@ -50,10 +51,14 @@ class LSTMAttention(BaseRecurrent, Initializable):
         return super(LSTMAttention, self).get_dim(name)
 
     def _allocate(self):
-        self.W_patch = shared_floatx_nans((np.prod(self.patch_shape) + 4,
-                                           4 * self.dim),
-                                          name='W_patch')
-        self.b = shared_floatx_nans((4 * self.dim,), name='b')
+        self.W_patch1 = shared_floatx_nans((np.prod(self.patch_shape) + 4,
+                                            4 * self.dim),
+                                           name='W_patch1')
+        self.W_patch2 = shared_floatx_nans((4 * self.dim,
+                                            4 * self.dim),
+                                           name='W_patch2')
+        self.b1 = shared_floatx_nans((4 * self.dim,), name='b1')
+        self.b2 = shared_floatx_nans((4 * self.dim,), name='b2')
         self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
                                           name='W_state')
         # The underscore is required to prevent collision with
@@ -67,21 +72,25 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.initial_scale = shared_floatx_zeros((2,),
                                                  name="initial_scale")
         add_role(self.W_state, WEIGHT)
-        add_role(self.b, BIAS)
-        add_role(self.W_patch, WEIGHT)
+        add_role(self.b1, BIAS)
+        add_role(self.b2, BIAS)
+        add_role(self.W_patch1, WEIGHT)
+        add_role(self.W_patch2, WEIGHT)
         add_role(self.initial_state_, INITIAL_STATE)
         add_role(self.initial_cells, INITIAL_STATE)
         add_role(self.initial_location, INITIAL_STATE)
         add_role(self.initial_scale, INITIAL_STATE)
 
         self.parameters = [
-            self.W_state, self.W_patch, self.b, self.initial_state_,
-            self.initial_cells, self.initial_location, self.initial_scale]
+            self.W_state, self.W_patch1, self.W_patch2, self.b1, self.b2,
+            self.initial_state_, self.initial_cells, self.initial_location,
+            self.initial_scale]
 
     def _initialize(self):
-        for weights in self.parameters[:2]:
+        for weights in self.parameters[:3]:
             self.weights_init.initialize(weights, self.rng)
-        self.biases_init.initialize(self.parameters[2], self.rng)
+        for biases in self.parameters[3:5]:
+            self.biases_init.initialize(biases, self.rng)
         self.children[1].initialize()
 
     @recurrent(sequences=['inputs', 'mask'],
@@ -110,7 +119,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         location = (location * 2 / self.image_shape[0]) - 1
         scale = scale - self.min_scale - 1
         mlp_output = mlp.apply(tensor.concatenate(
-            [downn_sampled_input, location, scale, states], axis=1))
+            [downn_sampled_input, location, scale, states, cells], axis=1))
         # To range the location between 0 and image_shape
         location = (mlp_output[:, 0:2] + 1) * self.image_shape[0] / 2
         # Relative location
@@ -129,7 +138,10 @@ class LSTMAttention(BaseRecurrent, Initializable):
 
         patch = tensor.concatenate([patch.flatten(ndim=2), location, scale],
                                    axis=1)
-        transformed_patch = tensor.dot(patch, self.W_patch) + self.b
+        relu = self.children[3]
+        transformed_patch = tensor.dot(
+            relu.apply(tensor.dot(patch, self.W_patch1) + self.b1),
+            self.W_patch2) + self.b2
 
         activation = tensor.dot(states, self.W_state) + transformed_patch
         in_gate = tensor.nnet.sigmoid(slice_last(activation, 0))
