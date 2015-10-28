@@ -4,7 +4,7 @@ import time
 import numpy as np
 import theano.tensor as T
 import theano
-from blocks.algorithms import (GradientDescent, Adam, Momentum,
+from blocks.algorithms import (GradientDescent, Adam,
                                CompositeRule, StepClipping)
 from blocks.extensions import FinishAfter, Printing, ProgressBar
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
@@ -29,7 +29,7 @@ def setup_model():
     # shape: B
     target = T.lvector('targets')
     model = LSTMAttention(dim=256,
-                          mlp_hidden_dims=[200, 4],
+                          mlp_hidden_dims=[256, 4],
                           batch_size=100,
                           image_shape=(100, 100),
                           patch_shape=(16, 16),
@@ -37,15 +37,16 @@ def setup_model():
                           biases_init=Constant(0))
     model.initialize()
     h, c, location, scale = model.apply(input_)
-    classifier = MLP([Rectifier(), Softmax()], [256, 100, 10],
+    classifier = MLP([Rectifier(), Softmax()], [256 * 2, 200, 10],
                      weights_init=Glorot(),
                      biases_init=Constant(0))
     model.h = h
+    model.c = c
     model.location = location
     model.scale = scale
     classifier.initialize()
 
-    probabilities = classifier.apply(h[-1])
+    probabilities = classifier.apply(T.concatenate([h[-1], c[-1]], axis=1))
     cost = CategoricalCrossEntropy().apply(target, probabilities)
     error_rate = MisclassificationRate().apply(target, probabilities)
     model.cost = cost
@@ -76,12 +77,12 @@ def setup_model():
     return model
 
 
-def train(model, batch_size=100, num_epochs=500):
+def train(model, batch_size=100, num_epochs=1000):
     cost = model.cost
     monitorings = model.monitorings
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/test_cont_adam_lr_m6_' + timestr
+    save_path = 'results/test_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -94,27 +95,9 @@ def train(model, batch_size=100, num_epochs=500):
     print "Number of found parameters:" + str(len(all_params))
     print all_params
 
-    # grads = T.grad(cost, all_params)
-    # from blocks.graph import ComputationGraph
-    # cg = ComputationGraph(cost)
-    # f = theano.function(cg.inputs, grads)
-    # tds, vds = get_mnist_video_streams(100)
-    # data = tds.get_epoch_iterator().next()
-    # res = f(data[1], data[0])
-    # res_norm = [np.mean(np.abs(r)) for r in res]
-    # params_dicts = blocks_model.get_parameter_dict()
-    # for e1, e2 in zip(params_dicts, res_norm):
-    #     print str(e1) + ": " + str(e2)
-    # import ipdb; ipdb.set_trace()
-
     clipping = StepClipping(threshold=np.cast[floatX](10))
 
-    # sgd_momentum = Momentum(
-    #     learning_rate=0.0001,
-    #     momentum=0.95)
-    # step_rule = CompositeRule([clipping, sgd_momentum])
-
-    adam = Adam(learning_rate=0.000001)
+    adam = Adam(learning_rate=0.00001)
     step_rule = CompositeRule([adam, clipping])
     training_algorithm = GradientDescent(
         cost=cost, parameters=all_params,
@@ -188,10 +171,9 @@ def evaluate(model, load_path):
     for i in range(10):
         visualize_attention(data[0][:, i, :],
                             res[0][:, i, :], res[1][:, i, :], prefix=str(i))
-    import ipdb; ipdb.set_trace()
 
 if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
         model = setup_model()
-        evaluate(model, 'results/test_cont_adam_lr_m5_2015_10_18_at_15_35')
-        # train(model)
+        # evaluate(model, 'results/test_cont_adam_lr_m5_2015_10_18_at_15_35')
+        train(model)
