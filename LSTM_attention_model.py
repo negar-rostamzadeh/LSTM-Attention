@@ -3,6 +3,7 @@ from blocks.bricks.base import application, lazy
 from blocks.roles import add_role, WEIGHT, BIAS, INITIAL_STATE
 from blocks.utils import shared_floatx_nans, shared_floatx_zeros
 from blocks.bricks.recurrent import BaseRecurrent, recurrent
+import theano
 import theano.tensor as tensor
 import numpy as np
 from crop import LocallySoftRectangularCropper
@@ -19,7 +20,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.patch_shape = patch_shape
         self.batch_size = batch_size
         non_lins = [Rectifier()] * (len(mlp_hidden_dims) - 1) + [Tanh()]
-        mlp_dims = [np.prod(patch_shape) + 2 * dim + 4] + mlp_hidden_dims
+        mlp_dims = [np.prod(patch_shape) + dim + 4] + mlp_hidden_dims
         mlp = MLP(non_lins, mlp_dims,
                   weights_init=self.weights_init,
                   biases_init=self.biases_init,
@@ -33,6 +34,9 @@ class LSTMAttention(BaseRecurrent, Initializable):
             kernel=Gaussian())
         self.rescaling_factor = patch_shape[0] / image_shape[0]
         self.min_scale = self.rescaling_factor
+
+        default_lr = np.float32(0.0001)
+        self.lr_var = theano.shared(default_lr, name="learning_rate")
 
         if not activation:
             activation = Tanh()
@@ -52,12 +56,12 @@ class LSTMAttention(BaseRecurrent, Initializable):
 
     def _allocate(self):
         self.W_patch1 = shared_floatx_nans((np.prod(self.patch_shape) + 4,
-                                            4 * self.dim),
+                                            2 * self.dim),
                                            name='W_patch1')
-        self.W_patch2 = shared_floatx_nans((4 * self.dim,
+        self.W_patch2 = shared_floatx_nans((2 * self.dim,
                                             4 * self.dim),
                                            name='W_patch2')
-        self.b1 = shared_floatx_nans((4 * self.dim,), name='b1')
+        self.b1 = shared_floatx_nans((2 * self.dim,), name='b1')
         self.b2 = shared_floatx_nans((4 * self.dim,), name='b2')
         self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
                                           name='W_state')
@@ -119,7 +123,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         location = (location * 2 / self.image_shape[0]) - 1
         scale = scale - self.min_scale - 1
         mlp_output = mlp.apply(tensor.concatenate(
-            [downn_sampled_input, location, scale, states, cells], axis=1))
+            [downn_sampled_input, location, scale, states], axis=1))
         # To range the location between 0 and image_shape
         location = (mlp_output[:, 0:2] + 1) * self.image_shape[0] / 2
         # Relative location
@@ -146,8 +150,8 @@ class LSTMAttention(BaseRecurrent, Initializable):
         activation = tensor.dot(states, self.W_state) + transformed_patch
         in_gate = tensor.nnet.sigmoid(slice_last(activation, 0))
         forget_gate_input = slice_last(activation, 1)
-        forget_gate = tensor.nnet.sigmoid(forget_gate_input +
-                                          tensor.ones_like(forget_gate_input))
+        forget_gate = tensor.nnet.sigmoid(
+            forget_gate_input + 2 * tensor.ones_like(forget_gate_input))
         next_cells = (forget_gate * cells +
                       in_gate * nonlinearity(slice_last(activation, 2)))
         out_gate = tensor.nnet.sigmoid(slice_last(activation, 3))

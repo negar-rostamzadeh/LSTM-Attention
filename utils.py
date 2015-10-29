@@ -30,20 +30,23 @@ def shared_param(init, name, cast_float32, role, **kwargs):
 
 
 class LRDecay(SimpleExtension):
-    def __init__(self, lr, decay_first, decay_last, **kwargs):
+    def __init__(self, lr_var, lrs, until_which_epoch, **kwargs):
         super(LRDecay, self).__init__(**kwargs)
+        # assert self.num_epochs == until_which_epoch[-1]
         self.iter = 0
-        self.decay_first = decay_first
-        self.decay_last = decay_last
-        self.lr = lr
-        self.lr_init = lr.get_value()
+        self.lrs = lrs
+        self.until_which_epoch = until_which_epoch
+        self.lr_var = lr_var
 
     def do(self, which_callback, *args):
         self.iter += 1
-        if self.iter > self.decay_first:
-            ratio = 1.0 * (self.decay_last - self.iter)
-            ratio = np.maximum(0, ratio / (self.decay_last - self.decay_first))
-            self.lr.set_value(np.float32(ratio * self.lr_init))
+        if self.iter < self.until_which_epoch[-1]:
+            lr_index = [self.iter < epoch for epoch
+                        in self.until_which_epoch].index(True)
+        else:
+            print "WARNING: the smallest learning rate is using."
+            lr_index = -1
+        self.lr_var.set_value(np.float32(self.lrs[lr_index]))
 
 
 class AttributeDict(dict):
@@ -120,6 +123,7 @@ class Glorot(NdarrayInitialization):
         high = np.sqrt(6) / np.sqrt(input_size + output_size)
         m = rng.uniform(-high, high, size=shape)
         if shape == (256, 1024):
+            # import ipdb; ipdb.set_trace()
             high = np.sqrt(6) / np.sqrt(256 + 1024)
             mi = rng.uniform(-high, high, size=(256, 256))
             mf = rng.uniform(-high, high, size=(256, 256))

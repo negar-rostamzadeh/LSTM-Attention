@@ -139,7 +139,7 @@ class Preprocessor_CMV_v2(Transformer):
 
 
 def get_cmv_v2_streams(batch_size):
-    path = '/data/lisatmp3/cooijmat/datasets/cmv/cmv20x100x100_jpeg.hdf5'
+    path = '/data/lisatmp3/cooijmat/datasets/cmv/cmv20x64x64_jpeg.hdf5'
     train_dataset = CMVv2(path=path, which_set="train")
     valid_dataset = CMVv2(path=path, which_set="valid")
     train_ind = numpy.arange(train_dataset.num_examples)
@@ -157,6 +157,9 @@ def get_cmv_v2_streams(batch_size):
         valid_dataset,
         iteration_scheme=ShuffledScheme(valid_ind, batch_size))
     valid_datastream = Preprocessor_CMV_v2(valid_datastream)
+
+    train_datastream.sources = ('features', 'targets')
+    valid_datastream.sources = ('features', 'targets')
 
     return train_datastream, valid_datastream
 

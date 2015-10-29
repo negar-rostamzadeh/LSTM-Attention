@@ -14,7 +14,8 @@ from blocks.bricks import Rectifier, Softmax, MLP
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams, Glorot, visualize_attention
-from datasets import get_mnist_video_streams
+from utils import LRDecay
+from datasets import get_cmv_v2_streams
 from blocks.initialization import Constant
 from blocks.graph import ComputationGraph
 from LSTM_attention_model import LSTMAttention
@@ -31,7 +32,7 @@ def setup_model():
     model = LSTMAttention(dim=256,
                           mlp_hidden_dims=[256, 4],
                           batch_size=100,
-                          image_shape=(100, 100),
+                          image_shape=(64, 64),
                           patch_shape=(16, 16),
                           weights_init=Glorot(),
                           biases_init=Constant(0))
@@ -51,27 +52,23 @@ def setup_model():
     error_rate = MisclassificationRate().apply(target, probabilities)
     model.cost = cost
 
-    location_x_avg = T.mean(location[:, 0])
-    location_x_avg.name = 'location_x_avg'
-    location_y_avg = T.mean(location[:, 1])
-    location_y_avg.name = 'location_y_avg'
-    scale_x_avg = T.mean(scale[:, 0])
-    scale_x_avg.name = 'scale_x_avg'
-    scale_y_avg = T.mean(scale[:, 1])
-    scale_y_avg.name = 'scale_y_avg'
+    location_x_0_avg = T.mean(location[0, :, 0])
+    location_x_0_avg.name = 'location_x_0_avg'
+    location_x_10_avg = T.mean(location[10, :, 0])
+    location_x_10_avg.name = 'location_x_10_avg'
+    location_x_20_avg = T.mean(location[-1, :, 0])
+    location_x_20_avg.name = 'location_x_20_avg'
 
-    location_x_std = T.std(location[:, 0])
-    location_x_std.name = 'location_x_std'
-    location_y_std = T.std(location[:, 1])
-    location_y_std.name = 'location_y_std'
-    scale_x_std = T.std(scale[:, 0])
-    scale_x_std.name = 'scale_x_std'
-    scale_y_std = T.std(scale[:, 1])
-    scale_y_std.name = 'scale_y_std'
+    scale_x_0_avg = T.mean(scale[0, :, 0])
+    scale_x_0_avg.name = 'scale_x_0_avg'
+    scale_x_10_avg = T.mean(scale[10, :, 0])
+    scale_x_10_avg.name = 'scale_x_10_avg'
+    scale_x_20_avg = T.mean(scale[-1, :, 0])
+    scale_x_20_avg.name = 'scale_x_20_avg'
 
     monitorings = [error_rate,
-                   location_x_avg, location_y_avg, scale_x_avg, scale_y_avg,
-                   location_x_std, location_y_std, scale_x_std, scale_y_std]
+                   location_x_0_avg, location_x_10_avg, location_x_20_avg,
+                   scale_x_0_avg, scale_x_10_avg, scale_x_20_avg]
     model.monitorings = monitorings
 
     return model
@@ -82,7 +79,7 @@ def train(model, batch_size=100, num_epochs=1000):
     monitorings = model.monitorings
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/test_' + timestr
+    save_path = 'results/CMV_V2_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -97,13 +94,14 @@ def train(model, batch_size=100, num_epochs=1000):
 
     clipping = StepClipping(threshold=np.cast[floatX](10))
 
-    adam = Adam(learning_rate=0.00001)
+    adam = Adam(learning_rate=model.lr_var)
     step_rule = CompositeRule([adam, clipping])
     training_algorithm = GradientDescent(
         cost=cost, parameters=all_params,
         step_rule=step_rule)
 
     monitored_variables = [
+        model.lr_var,
         cost,
         aggregation.mean(training_algorithm.total_gradient_norm)] + monitorings
 
@@ -117,7 +115,7 @@ def train(model, batch_size=100, num_epochs=1000):
         to_monitor.name = name + "_norm"
         monitored_variables.append(to_monitor)
 
-    train_data_stream, valid_data_stream = get_mnist_video_streams(batch_size)
+    train_data_stream, valid_data_stream = get_cmv_v2_streams(batch_size)
 
     train_monitoring = TrainingDataMonitoring(
         variables=monitored_variables,
@@ -142,6 +140,10 @@ def train(model, batch_size=100, num_epochs=1000):
                        blocks_model, save_path),
             SaveLog(save_path, after_epoch=True),
             ProgressBar(),
+            LRDecay(model.lr_var,
+                    [0.001, 0.0001, 0.00001, 0.000001],
+                    [8, 15, 30, 1000],
+                    after_epoch=True),
             Printing()])
     main_loop.run()
 
@@ -160,7 +162,7 @@ def evaluate(model, load_path):
                     assert param.get_value().shape == loaded[param_name].shape
                     param.set_value(loaded[param_name])
 
-    train_data_stream, valid_data_stream = get_mnist_video_streams(100)
+    train_data_stream, valid_data_stream = get_cmv_v2_streams(100)
     # T x B x F
     data = train_data_stream.get_epoch_iterator().next()
     cg = ComputationGraph(model.cost)
