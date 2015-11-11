@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 import numpy as np
 import theano.tensor as T
@@ -15,14 +16,16 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams, Glorot, visualize_attention, LRDecay
 from utils import plot_curves
-from datasets import get_cmv_v2_streams
+from datasets import (get_cmv_v2_len10_streams,
+                      get_cmv_v2_len20_streams,
+                      get_cmv_v2_64_len20_streams)
 from blocks.initialization import Constant
 from blocks.graph import ComputationGraph
 from LSTM_attention_model import LSTMAttention
 from blocks.monitoring import aggregation
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+# import matplotlib
+# matplotlib.use('Agg')
+# import matplotlib.pyplot as plt
 floatX = theano.config.floatX
 logger = logging.getLogger('main')
 image_shape = (100, 100)
@@ -78,12 +81,12 @@ def setup_model():
     return model
 
 
-def train(model, batch_size=100, num_epochs=600):
+def train(model, lrs, get_streams, batch_size=100, num_epochs=600):
     cost = model.cost
     monitorings = model.monitorings
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/dataset1_100_len10_gradclip50_lr4_till5_lr5_till60_lr6_till600_' + timestr
+    save_path = 'results/dataset2_len10_high_lr_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -96,23 +99,10 @@ def train(model, batch_size=100, num_epochs=600):
     print "Number of found parameters:" + str(len(all_params))
     print all_params
 
-    # grads = T.grad(cost, all_params)
-    # from blocks.graph import ComputationGraph
-    # cg = ComputationGraph(cost)
-    # f = theano.function(cg.inputs, grads)
-    # tds, vds = get_cmv_v2_streams(100)
-    # data = tds.get_epoch_iterator().next()
-    # res = f(data[1], data[0])
-    # res_norm = [np.mean(np.abs(r)) for r in res]
-    # params_dicts = blocks_model.get_parameter_dict()
-    # for e1, e2 in zip(params_dicts, res_norm):
-    #     print str(e1) + ": " + str(e2)
-    # import ipdb; ipdb.set_trace()
-
     default_lr = np.float32(1e-3)
     lr_var = theano.shared(default_lr, name="learning_rate")
 
-    clipping = StepClipping(threshold=np.cast[floatX](50))
+    clipping = StepClipping(threshold=np.cast[floatX](5))
 
     # sgd_momentum = Momentum(
     #     learning_rate=0.0001,
@@ -130,18 +120,10 @@ def train(model, batch_size=100, num_epochs=600):
         aggregation.mean(training_algorithm.total_gradient_norm)] + monitorings
 
     blocks_model = Model(cost)
-    # params_dicts = blocks_model.get_parameter_dict()
-    # for name, param in params_dicts.iteritems():
-    #     to_monitor = training_algorithm.gradients[param].norm(2)
-    #     to_monitor.name = name + "_grad_norm"
-    #     monitored_variables.append(to_monitor)
-    #     to_monitor = param.norm(2)
-    #     to_monitor.name = name + "_norm"
-    #     monitored_variables.append(to_monitor)
 
     monitored_variables.append(lr_var)
 
-    train_data_stream, valid_data_stream = get_cmv_v2_streams(batch_size)
+    train_data_stream, valid_data_stream = get_streams(batch_size)
 
     train_monitoring = TrainingDataMonitoring(
         variables=monitored_variables,
@@ -166,7 +148,7 @@ def train(model, batch_size=100, num_epochs=600):
                        blocks_model, save_path),
             SaveLog(save_path, after_epoch=True),
             ProgressBar(),
-            LRDecay(lr_var, [1e-4, 1e-5, 1e-6], [7, 60, 600],
+            LRDecay(lr_var, lrs, [80, 400],
                     after_epoch=True),
             Printing()])
     main_loop.run()
@@ -187,7 +169,7 @@ def evaluate(model, load_path, plot):
             param.set_value(loaded[param_name])
 
     if plot:
-        train_data_stream, valid_data_stream = get_cmv_v2_streams(100)
+        train_data_stream, valid_data_stream = get_streams(100)
         # T x B x F
         data = train_data_stream.get_epoch_iterator().next()
         cg = ComputationGraph(model.cost)
@@ -199,7 +181,6 @@ def evaluate(model, load_path, plot):
             visualize_attention(data[0][:, i, :],
                                 res[0][:, i, :], res[1][:, i, :],
                                 image_shape=image_shape, prefix=str(i))
-        import ipdb; ipdb.set_trace()
 
         plot_curves(path=load_path,
                     to_be_plotted=['train_categoricalcrossentropy_apply_cost',
@@ -238,11 +219,13 @@ def evaluate(model, load_path, plot):
                         yaxis='GradientNorm',
                         titles=['train',
                                 'valid'],
-                        main_title=grad.replace("_", "").replace("/", "").replace(".", ""))
+                        main_title=grad.replace(
+                            "_", "").replace("/", "").replace(".", ""))
 
         plot_curves(path=load_path,
-                    to_be_plotted=['train_misclassificationrate_apply_error_rate',
-                                   'valid_misclassificationrate_apply_error_rate'],
+                    to_be_plotted=[
+                        'train_misclassificationrate_apply_error_rate',
+                        'valid_misclassificationrate_apply_error_rate'],
                     yaxis='Error rate',
                     titles=['train', 'valid'],
                     main_title='Error')
@@ -250,34 +233,50 @@ def evaluate(model, load_path, plot):
 
 
 if __name__ == "__main__":
+        lr = str(sys.argv[1])
+        dataset = str(sys.argv[2])
+        if lr == 'low':
+            lrs = [1e-5, 1e-6]
+        elif lr == 'med':
+            lrs = [1e-4, 1e-5]
+        elif lr == 'high':
+            lrs = [1e-3, 1e-4]
+
+        if dataset == 'cmv_v2_len10':
+            get_streams = get_cmv_v2_len10_streams
+        elif dataset == 'cmv_v2_len20':
+            get_streams = get_cmv_v2_len20_streams
+        elif dataset == 'cmv_v2_64_len20':
+            get_streams = get_cmv_v2_64_len20_streams
+
         logging.basicConfig(level=logging.INFO)
         model = setup_model()
-        ds, _ = get_cmv_v2_streams(100)
-        data = ds.get_epoch_iterator(as_dict=True).next()
-        inputs = ComputationGraph(model.patch).inputs
-        f = theano.function(inputs, [model.location, model.scale,
-                                     model.patch, model.downn_sampled_input])
-        res = f(data['features'])
-        import ipdb; ipdb.set_trace()
-        location, scale, patch, downn_sampled_input = res
+        # ds, _ = get_cmv_v2_streams(100)
+        # data = ds.get_epoch_iterator(as_dict=True).next()
+        # inputs = ComputationGraph(model.patch).inputs
+        # f = theano.function(inputs, [model.location, model.scale,
+        #                              model.patch, model.downn_sampled_input])
+        # res = f(data['features'])
+        # import ipdb; ipdb.set_trace()
+        # location, scale, patch, downn_sampled_input = res
         # os.makedirs('res_frames/')
         # os.makedirs('res_patch/')
         # os.makedirs('res_downn_sampled_input/')
-        for i, f in enumerate(data['features']):
-            plt.imshow(f[0].reshape(100, 100), cmap=plt.gray(), interpolation='nearest')
-            plt.savefig('res_frames/img_' + str(i) + '.png')
-        for i, p in enumerate(patch):
-            plt.imshow(p[0, 0], cmap=plt.gray(), interpolation='nearest')
-            plt.savefig('res_patch/img_' + str(i) + '.png')
-        for i, d in enumerate(downn_sampled_input):
-            plt.imshow(d[0, 0], cmap=plt.gray(), interpolation='nearest')
-            plt.savefig('res_downn_sampled_input/img_' + str(i) + '.png')
+        # for i, f in enumerate(data['features']):
+        #     plt.imshow(f[0].reshape(100, 100), cmap=plt.gray(),
+        #                interpolation='nearest')
+        #     plt.savefig('res_frames/img_' + str(i) + '.png')
+        # for i, p in enumerate(patch):
+        #     plt.imshow(p[0, 0], cmap=plt.gray(), interpolation='nearest')
+        #     plt.savefig('res_patch/img_' + str(i) + '.png')
+        # for i, d in enumerate(downn_sampled_input):
+        #     plt.imshow(d[0, 0], cmap=plt.gray(), interpolation='nearest')
+        #     plt.savefig('res_downn_sampled_input/img_' + str(i) + '.png')
 
-        for i in range(1):
-            visualize_attention(data['features'][:, i],
-                                (location[:, i] + 1) * image_shape[0] / 2,
-                                scale[:, i] + 1 + 0.24 - 0.08,
-                                image_shape=image_shape, prefix=str(i))
-        import ipdb; ipdb.set_trace()
+        # for i in range(1):
+        #     visualize_attention(data['features'][:, i],
+        #                         (location[:, i] + 1) * image_shape[0] / 2,
+        #                         scale[:, i] + 1 + 0.24 - 0.08,
+        #                         image_shape=image_shape, prefix=str(i))
         # evaluate(model, 'results/dataset2_100_lenodd10_gradclip50_lr4_till5_lr5_till60_lr6_till600_2015_11_09_at_00_24/', plot=True)
-        # train(model)
+        train(model, lrs, get_streams)
