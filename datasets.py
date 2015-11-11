@@ -120,7 +120,7 @@ class CMVv2(fuel.datasets.H5PYDataset):
 
 
 class Preprocessor_CMV_v2(Transformer):
-    def __init__(self, data_stream, **kwargs):
+    def __init__(self, data_stream, len, **kwargs):
         super(Preprocessor_CMV_v2, self).__init__(
             data_stream, **kwargs)
 
@@ -131,7 +131,9 @@ class Preprocessor_CMV_v2(Transformer):
         features = np.hstack(features)
         T, B, X, Y = features.shape
         features = features.reshape(T, B, -1)
-        # features = features[5:15]
+        if len == 10:
+            features = features[5:15]
+
         features = features[::2]
         features = features.astype('float32')
         # Now the data shape should be T x B x F
@@ -140,7 +142,33 @@ class Preprocessor_CMV_v2(Transformer):
         return transformed_data
 
 
-def get_cmv_v2_streams(batch_size):
+def get_cmv_v2_64_len20_streams(batch_size):
+    path = '/data/lisatmp3/cooijmat/datasets/cmv/cmv20x64x64_png.hdf5'
+    train_dataset = CMVv2(path=path, which_set="train")
+    valid_dataset = CMVv2(path=path, which_set="valid")
+    train_ind = numpy.arange(train_dataset.num_examples)
+    valid_ind = numpy.arange(valid_dataset.num_examples)
+    rng = numpy.random.RandomState(seed=1)
+    rng.shuffle(train_ind)
+    rng.shuffle(valid_ind)
+
+    train_datastream = DataStream.default_stream(
+        train_dataset,
+        iteration_scheme=ShuffledScheme(train_ind, batch_size))
+    train_datastream = Preprocessor_CMV_v2(train_datastream, 20)
+
+    valid_datastream = DataStream.default_stream(
+        valid_dataset,
+        iteration_scheme=ShuffledScheme(valid_ind, batch_size))
+    valid_datastream = Preprocessor_CMV_v2(valid_datastream, 20)
+
+    train_datastream.sources = ('features', 'targets')
+    valid_datastream.sources = ('features', 'targets')
+
+    return train_datastream, valid_datastream
+
+
+def get_cmv_v2_len20_streams(batch_size):
     path = '/data/lisatmp3/cooijmat/datasets/cmv/cmv20x100x100_png.hdf5'
     train_dataset = CMVv2(path=path, which_set="train")
     valid_dataset = CMVv2(path=path, which_set="valid")
@@ -153,12 +181,38 @@ def get_cmv_v2_streams(batch_size):
     train_datastream = DataStream.default_stream(
         train_dataset,
         iteration_scheme=ShuffledScheme(train_ind, batch_size))
-    train_datastream = Preprocessor_CMV_v2(train_datastream)
+    train_datastream = Preprocessor_CMV_v2(train_datastream, 20)
 
     valid_datastream = DataStream.default_stream(
         valid_dataset,
         iteration_scheme=ShuffledScheme(valid_ind, batch_size))
-    valid_datastream = Preprocessor_CMV_v2(valid_datastream)
+    valid_datastream = Preprocessor_CMV_v2(valid_datastream, 20)
+
+    train_datastream.sources = ('features', 'targets')
+    valid_datastream.sources = ('features', 'targets')
+
+    return train_datastream, valid_datastream
+
+
+def get_cmv_v2_len10_streams(batch_size):
+    path = '/data/lisatmp3/cooijmat/datasets/cmv/cmv20x100x100_png.hdf5'
+    train_dataset = CMVv2(path=path, which_set="train")
+    valid_dataset = CMVv2(path=path, which_set="valid")
+    train_ind = numpy.arange(train_dataset.num_examples)
+    valid_ind = numpy.arange(valid_dataset.num_examples)
+    rng = numpy.random.RandomState(seed=1)
+    rng.shuffle(train_ind)
+    rng.shuffle(valid_ind)
+
+    train_datastream = DataStream.default_stream(
+        train_dataset,
+        iteration_scheme=ShuffledScheme(train_ind, batch_size))
+    train_datastream = Preprocessor_CMV_v2(train_datastream, 10)
+
+    valid_datastream = DataStream.default_stream(
+        valid_dataset,
+        iteration_scheme=ShuffledScheme(valid_ind, batch_size))
+    valid_datastream = Preprocessor_CMV_v2(valid_datastream, 10)
 
     train_datastream.sources = ('features', 'targets')
     valid_datastream.sources = ('features', 'targets')
