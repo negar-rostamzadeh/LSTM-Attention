@@ -40,7 +40,7 @@ class ModelTrain(object):
         # x_r = x_r - (
         #     np.array([104, 117, 123])[None, :, None, None]).astype('float32')
 
-        with open('data.npz') as f: data = np.load(f); data=data['data']
+        # with open('data.npz') as f: data = np.load(f); data=data['data']
 
         expressions, input_data, param = stream_layer_exp(
             inputs=('data', x), mode='rgb')
@@ -70,15 +70,15 @@ class ModelTrain(object):
 
         img = img.astype('float32')
 
-        res = f(data)
-        keys = expressions.keys()
-        del keys[1]
-        for key, r in zip(keys, res):
-            print key + ': ' + str(r.shape)
+        # res = f(data)
+        # keys = expressions.keys()
+        # del keys[1]
+        # for key, r in zip(keys, res):
+        #     print key + ': ' + str(r.shape)
 
-        print res.shape
+        # print res.shape
 
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
 
         to_save = {}
         keys = ['conv_1_1_w', 'conv_1_1_b', 'conv_1_2_w', 'conv_1_2_b', 'conv_2_1_w',

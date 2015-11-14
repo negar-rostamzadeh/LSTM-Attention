@@ -37,6 +37,8 @@ class LSTMAttention(BaseRecurrent, Initializable):
                        ['conv_2', (32, 16, 5, 5), None, None],
                        ['conv_3', (48, 32, 3, 3), (2, 2), (2, 2)]]
         fc_layers = [['fc4', (192, 256), 'relu']]
+        # conv_layers = []
+        # fc_layers = [['fc4', (576, 256), 'relu']]
         self.mlp_hidden_dims = mlp_hidden_dims
         self.conv_layers = conv_layers
         self.fc_layers = fc_layers
@@ -49,7 +51,8 @@ class LSTMAttention(BaseRecurrent, Initializable):
             hyperparameters={'cutoff': 3, 'batched_window': True},
             kernel=Gaussian())
         self.rescaling_factor = float(patch_shape[0]) / float(image_shape[0])
-        self.min_scale = self.rescaling_factor
+        self.min_scale = 0.24 - 0.05
+        # self.rescaling_factor = 0.0
 
         if not activation:
             activation = Tanh()
@@ -90,7 +93,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
             conv = dnn_conv(out, w)
             m = conv.mean(0, keepdims=True)
             s = conv.var(0, keepdims=True)
-            conv = (conv - m) / tensor.sqrt(s + np.float32(1e-10))
+            # conv = (conv - m) / tensor.sqrt(s + np.float32(1e-8))
             conv = conv + b.dimshuffle('x', 0, 'x', 'x')
             out = relu(conv)
             if pool_shape is not None:
@@ -113,7 +116,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
             out = tensor.dot(out, w)
             m = out.mean(0, keepdims=True)
             s = out.var(0, keepdims=True)
-            out = (out - m) / tensor.sqrt(s + np.float32(1e-10))
+            # out = (out - m) / tensor.sqrt(s + np.float32(1e-8))
             out = act(out + b)
         return out
 
@@ -224,8 +227,8 @@ class LSTMAttention(BaseRecurrent, Initializable):
             (location + 1) * self.image_shape[0] / 2,
             # use the same scale for both x and y
             tensor.concatenate([
-                scale + 1 + self.min_scale - 0.08,
-                scale + 1 + self.min_scale - 0.08], axis=1))
+                scale + 1 + self.min_scale,
+                scale + 1 + self.min_scale], axis=1))
 
         # It is a nice name, isn't it?
         # B x C x X x Y

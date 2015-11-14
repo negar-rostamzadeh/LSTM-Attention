@@ -1,4 +1,5 @@
 import numpy
+import os
 import theano
 from fuel.streams import DataStream
 from fuel.datasets import H5PYDataset
@@ -10,6 +11,9 @@ from StringIO import StringIO
 from PIL import Image
 import fuel.datasets
 from fuel import config
+from picklable_itertools import imap
+from picklable_itertools.extras import partition_all
+from fuel.transformers import ForceFloatX
 floatX = theano.config.floatX
 
 
@@ -142,7 +146,7 @@ class Preprocessor_CMV_v2(Transformer):
         return transformed_data
 
 
-def get_cmv_v2_64_len20_streams(batch_size):
+def get_cmv_v2_64_len10_streams(batch_size):
     path = '/data/lisatmp3/cooijmat/datasets/cmv/cmv20x64x64_png.hdf5'
     train_dataset = CMVv2(path=path, which_set="train")
     valid_dataset = CMVv2(path=path, which_set="valid")
@@ -155,12 +159,12 @@ def get_cmv_v2_64_len20_streams(batch_size):
     train_datastream = DataStream.default_stream(
         train_dataset,
         iteration_scheme=ShuffledScheme(train_ind, batch_size))
-    train_datastream = Preprocessor_CMV_v2(train_datastream, 20)
+    train_datastream = Preprocessor_CMV_v2(train_datastream, 10)
 
     valid_datastream = DataStream.default_stream(
         valid_dataset,
         iteration_scheme=ShuffledScheme(valid_ind, batch_size))
-    valid_datastream = Preprocessor_CMV_v2(valid_datastream, 20)
+    valid_datastream = Preprocessor_CMV_v2(valid_datastream, 10)
 
     train_datastream.sources = ('features', 'targets')
     valid_datastream.sources = ('features', 'targets')
@@ -233,10 +237,11 @@ class CookingDataset(fuel.datasets.H5PYDataset):
         video_ranges, targets = super(
             CookingDataset, self).get_data(*args, **kwargs)
         videos = list(map(self.video_from_jpegs, video_ranges))
+        import ipdb; ipdb.set_trace()
         return videos, targets
 
     def video_from_jpegs(self, video_range):
-        frames = self.frames[video_range[0]:video_range[1]]
+        frames = self.frames[video_range[0]:video_range[0] + video_range[1]]
         video = np.array(map(self.load_frame, frames))
         return video
 
@@ -270,7 +275,7 @@ class Preprocessor_Cooking(Transformer):
 
 
 def get_cooking_streams(batch_size):
-    path = '/u/pezeshki/tmp3/LSTM-Attention/Cooking2_JPEG_HDF5.hdf5'
+    path = '/data/lisatmp4/mohammad/test.hdf5'
     train_dataset = CookingDataset(path=path, which_set="train")
     valid_dataset = CookingDataset(path=path, which_set="val")
     test_dataset = CookingDataset(path=path, which_set="test")
@@ -285,6 +290,7 @@ def get_cooking_streams(batch_size):
     train_datastream = DataStream.default_stream(
         train_dataset,
         iteration_scheme=ShuffledScheme(train_ind, batch_size))
+    data = train_datastream.get_epoch_iterator(as_dict=True).next()
     import ipdb; ipdb.set_trace()
     train_datastream = Preprocessor_Cooking(train_datastream)
 
@@ -303,6 +309,95 @@ def get_cooking_streams(batch_size):
     test_datastream.sources = ('features', 'targets')
 
     return train_datastream, valid_datastream
+
+
+get_cooking_streams(100)
+
+
+class HDF5ShuffledScheme(ShuffledScheme):
+    def __init__(self, video_indexes,
+                 random_sample=True,
+                 f_subsample=1,
+                 r_subsample=False,
+                 *args, **kwargs):
+        self.rng = kwargs.pop('rng', None)
+        if self.rng is None:
+            self.rng = np.random.RandomState(config.default_seed)
+        self.sorted_indices = kwargs.pop('sorted_indices', False)
+        self.frames_per_video = kwargs.pop('frames_per_video', 10)
+        self.random_sample = random_sample
+
+        self.f_subsample = f_subsample
+        self.r_subsample = r_subsample
+
+        self.video_indexes = video_indexes
+        super(HDF5ShuffledScheme, self).__init__(*args, **kwargs)
+
+    def correct_subsample(self, start, end, fpv, subsample):
+        max_subsample = (end - start) / float(fpv)
+        return min(np.floor(max_subsample).astype(np.int), subsample)
+
+    def get_start_frame(self, start, end, fpv, subsample):
+        if self.random_sample:
+            return np.random.randint(start, end - subsample * fpv + 1)
+
+        nb_frame = end - start
+        if start + nb_frame // 2 + subsample * fpv < end:
+            return start + nb_frame // 2
+        return max(start, end - subsample * fpv)
+
+    def get_request_iterator(self):
+        indices = list(self.indices)
+        self.rng.shuffle(indices)
+        fpv = self.frames_per_video
+
+        if self.r_subsample:
+            subsample = np.random.randint(1, self.f_subsample)
+        else:
+            subsample = self.f_subsample
+
+        frames_array = np.empty([len(indices), fpv])
+        for j in xrange(len(indices)):
+            i = indices[j]
+            if i == 0:
+                c_subsample = self.correct_subsample(0, self.video_indexes[i],
+                                                     fpv, subsample)
+                t = self.get_start_frame(0, self.video_indexes[i],
+                                         fpv, c_subsample)
+            else:
+                c_subsample = self.correct_subsample(self.video_indexes[i - 1],
+                                                     self.video_indexes[i],
+                                                     fpv, subsample)
+                t = self.get_start_frame(self.video_indexes[i - 1],
+                                         self.video_indexes[i],
+                                         fpv, c_subsample)
+            for k in range(fpv):
+                frames_array[j][k] = t + c_subsample * k
+        frames_array = frames_array.flatten()
+
+        if self.sorted_indices:
+            return imap(
+                sorted, partition_all(self.batch_size * fpv, frames_array))
+        else:
+            return imap(
+                list, partition_all(self.batch_size * fpv, frames_array))
+
+
+class JpegHDF5Dataset(H5PYDataset):
+    def __init__(self,
+                 split="train",
+                 data_path='/data/lisatmp4/ballasn/datasets/UCF101_valid_1/jpeg_data.hdf5',
+                 name="jpeg_data.hdf5",
+                 signature='UCF101',
+                 load_in_memory=True):
+        data_file = h5py.File(data_path, 'r')
+
+        self.video_indexes = np.array(data_file["video_indexes"][split])
+        self.num_video_examples = len(self.video_indexes) - 1
+
+        super(JpegHDF5Dataset, self).__init__(
+            data_file, which_sets=(split,), load_in_memory=load_in_memory)
+        data_file.close()
 
 
 class JpegHDF5Transformer(Transformer):
@@ -503,7 +598,52 @@ class JpegHDF5Transformer(Transformer):
                     x[i, j, :, :, :] = new_image
         return (x, y)
 
+
+def get_ucf_streams(batch_size):
+    train_dataset = JpegHDF5Dataset("train")
+    valid_dataset = JpegHDF5Dataset("valid")
+    test_dataset = JpegHDF5Dataset("test")
+
+    train_datastream = ForceFloatX(DataStream(
+        dataset=train_dataset,
+        iteration_scheme=HDF5ShuffledScheme(
+            train_dataset.video_indexes,
+            examples=train_dataset.num_video_examples,
+            batch_size=batch_size,
+            frames_per_video=15)))
+
+    valid_datastream = ForceFloatX(DataStream(
+        dataset=valid_dataset,
+        iteration_scheme=HDF5ShuffledScheme(
+            valid_dataset.video_indexes,
+            examples=valid_dataset.num_video_examples,
+            batch_size=batch_size,
+            frames_per_video=15)))
+
+    test_datastream = ForceFloatX(DataStream(
+        dataset=test_dataset,
+        iteration_scheme=HDF5ShuffledScheme(
+            test_dataset.video_indexes,
+            examples=test_dataset.num_video_examples,
+            batch_size=batch_size,
+            frames_per_video=15)))
+
+    train_datastream = JpegHDF5Transformer(data_stream=train_datastream)
+    valid_datastream = JpegHDF5Transformer(data_stream=valid_datastream)
+    test_datastream = JpegHDF5Transformer(data_stream=test_datastream)
+
+    import ipdb; ipdb.set_trace()
+
+    train_datastream.sources = ('features', 'targets')
+    valid_datastream.sources = ('features', 'targets')
+    test_datastream.sources = ('features', 'targets')
+
+    return train_datastream, valid_datastream
+
 # tds, vds = get_cmv_v2_streams(60)
+# data = tds.get_epoch_iterator().next()
+# get_ucf_streams(100)
+# tds, vds = get_cmv_v1_streams(100)
 # data = tds.get_epoch_iterator().next()
 # import ipdb; ipdb.set_trace()
 # import matplotlib
