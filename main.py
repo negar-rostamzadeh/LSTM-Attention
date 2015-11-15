@@ -1,11 +1,11 @@
 import logging
 import os
-import sys
 import time
 import numpy as np
 import theano.tensor as T
+from theano import config
 import theano
-from blocks.algorithms import (GradientDescent, Adam, Momentum,
+from blocks.algorithms import (GradientDescent, Adam,
                                CompositeRule, StepClipping)
 from blocks.extensions import FinishAfter, Printing, ProgressBar
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
@@ -16,33 +16,31 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams, Glorot, visualize_attention, LRDecay
 from utils import plot_curves
-from datasets import get_cmv_v2_64_len10_streams
 from blocks.initialization import Constant
 from blocks.graph import ComputationGraph
 from LSTM_attention_model import LSTMAttention
 from blocks.monitoring import aggregation
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 floatX = theano.config.floatX
 logger = logging.getLogger('main')
-image_shape = (100, 100)
 
 
 def setup_model():
-    # shape: T x B x F
-    input_ = T.tensor3('features')
+    tensor5 = theano.tensor.TensorType(config.floatX, (False,) * 5)
+    # shape: T x B x C x X x Y
+    input_ = tensor5('features')
     # shape: B
     target = T.lvector('targets')
     model = LSTMAttention(dim=256,
                           mlp_hidden_dims=[128, 3],
-                          batch_size=100,
-                          image_shape=image_shape,
-                          patch_shape=(24, 24),
+                          batch_size=2,
+                          image_shape=(512, 512),
+                          patch_shape=(28, 28),
                           weights_init=Glorot(),
                           biases_init=Constant(0))
     model.initialize()
-    h, c, location, scale, patch, downn_sampled_input = model.apply(input_)
+
+    (h, c, location, scale, patch, downn_sampled_input,
+        conved_part_1, conved_part_2, pre_lstm) = model.apply(input_)
     classifier = MLP([Rectifier(), Softmax()], [256, 128, 10],
                      weights_init=Glorot(),
                      biases_init=Constant(0))
@@ -50,6 +48,9 @@ def setup_model():
     model.location = location
     model.scale = scale
     model.patch = patch
+    model.pre_lstm = pre_lstm
+    model.conved_part_2 = conved_part_2
+    model.conved_part_1 = conved_part_1
     model.downn_sampled_input = downn_sampled_input
     classifier.initialize()
 
@@ -75,6 +76,15 @@ def setup_model():
     monitorings = [error_rate,
                    scale_0, scale_5, scale_m1]
     model.monitorings = monitorings
+
+    blocks_model = Model(model.cost)
+    all_params = blocks_model.parameters
+    with open('VGG_CNN_params.npz') as f:
+        loaded = np.load(f)
+        for param in all_params:
+            if param.name in loaded.keys():
+                assert param.get_value().shape == loaded[param.name].shape
+                param.set_value(loaded[param.name])
 
     return model
 
@@ -186,7 +196,7 @@ def evaluate(model, load_path, plot):
         for i in range(10):
             visualize_attention(data[0][:, i, :],
                                 res[0][:, i, :], res[1][:, i, :],
-                                image_shape=image_shape, prefix=str(i))
+                                image_shape=(512, 512), prefix=str(i))
 
         plot_curves(path=load_path,
                     to_be_plotted=['train_categoricalcrossentropy_apply_cost',
@@ -239,25 +249,8 @@ def evaluate(model, load_path, plot):
 
 
 if __name__ == "__main__":
-        # lr = str(sys.argv[1])
-        # dataset = str(sys.argv[2])
-        # if lr == 'low':
-        #     lrs = [1e-5, 1e-6]
-        # elif lr == 'med':
-        #     lrs = [1e-4, 1e-5]
-        # elif lr == 'high':
-        #     lrs = [1e-3, 1e-4]
-
-        # if dataset == 'cmv_v2_len10':
-        #     get_streams = get_cmv_v2_len10_streams
-        # elif dataset == 'cmv_v2_len20':
-        #     get_streams = get_cmv_v2_len20_streams
-        # elif dataset == 'cmv_v2_64_len20':
-        #     get_streams = get_cmv_v2_64_len20_streams
-
         from datasets import get_cmv_v1_streams
         get_streams = get_cmv_v1_streams
-        # get_streams = get_cmv_v2_64_len10_streams
 
         logging.basicConfig(level=logging.INFO)
         model = setup_model()
@@ -271,7 +264,6 @@ if __name__ == "__main__":
                                 [model.location, model.scale,
                                  model.patch, model.downn_sampled_input])
             res = f(data['features'])
-            # import ipdb; ipdb.set_trace()
             location, scale, patch, downn_sampled_input = res
             # os.makedirs('res_frames/')
             # os.makedirs('res_patch/')
@@ -289,9 +281,10 @@ if __name__ == "__main__":
 
             for i in range(10):
                 visualize_attention(data['features'][:, i],
-                                    (location[:, i] + 1) * image_shape[0] / 2,
+                                    (location[:, i] + 1) * 512 / 2,
                                     scale[:, i] + 1 + 0.24 - 0.05,
-                                    image_shape=image_shape, prefix=str(i))
+                                    image_shape=(512, 512), prefix=str(i))
         else:
-            # evaluate(model, 'results/v2_len10_mlp_2015_11_13_at_18_37/', plot=False)
+            # evaluate(model, 'results/v2_len10_mlp_2015_11_13_at_18_37/',
+            #          plot=False)
             train(model, [1e-4, 1e-5], get_streams)
