@@ -17,42 +17,44 @@ class LSTMAttention(BaseRecurrent, Initializable):
                  image_shape, patch_shape, activation=None, **kwargs):
         super(LSTMAttention, self).__init__(**kwargs)
         conv_layers = [['conv_1_1', (64, 3, 3, 3), None, None],
-                       ['conv_1_2', (64, 64, 3, 3), (2, 2), (1, 1)],
+                       ['conv_1_2', (64, 64, 3, 3), (2, 2), None],
                        ['conv_2_1', (128, 64, 3, 3), None, None],
-                       ['conv_2_2', (128, 128, 3, 3), (2, 2), (1, 1)],
+                       ['conv_2_2', (128, 128, 3, 3), (2, 2), None],
                        ['conv_3_1', (256, 128, 3, 3), None, None],
                        ['conv_3_2', (256, 256, 3, 3), None, None],
-                       ['conv_3_3', (256, 256, 3, 3), (2, 2), (1, 1)],
+                       ['conv_3_3', (256, 256, 3, 3), None, None],
+                       # ['conv_3_3', (256, 256, 3, 3), (2, 2), None],
                        ['conv_4_1', (512, 256, 3, 3), None, None],
                        ['conv_4_2', (512, 512, 3, 3), None, None],
-                       ['conv_4_3', (512, 512, 3, 3), (2, 2), (1, 1)],
+                       ['conv_4_3', (512, 512, 3, 3), (2, 2), None],
                        ['conv_5_1', (512, 512, 3, 3), None, None],
                        ['conv_5_2', (512, 512, 3, 3), None, None],
-                       ['conv_5_3', (512, 512, 3, 3), (2, 2), (1, 1)]]
-        fc_layers = [['fc6', (25088, 4096)],
-                     ['fc7', (4096, 4096)],
-                     ['fc8-1', (4096, 101)]]
+                       ['conv_5_3', (512, 512, 3, 3), (2, 2), None]]
+        fc_layers = [['fc6', (25088, 4096), 'relu'],
+                     ['fc7', (4096, 4096), 'relu'],
+                     ['fc8-1', (4096, 101), 'lin']]
 
-        conv_layers = [['conv_1', (16, 1, 5, 5), (2, 2), (2, 2)],
-                       ['conv_2', (32, 16, 5, 5), None, None],
-                       ['conv_3', (48, 32, 3, 3), (2, 2), (2, 2)]]
-        fc_layers = [['fc4', (192, 256), 'relu']]
+        # conv_layers = [['conv_1', (16, 1, 5, 5), (2, 2), (2, 2)],
+        #                ['conv_2', (32, 16, 5, 5), None, None],
+        #                ['conv_3', (48, 32, 3, 3), (2, 2), (2, 2)]]
+        # fc_layers = [['fc4', (192, 256), 'relu']]
         # conv_layers = []
         # fc_layers = [['fc4', (576, 256), 'relu']]
         self.mlp_hidden_dims = mlp_hidden_dims
         self.conv_layers = conv_layers
         self.fc_layers = fc_layers
         self.dim = dim
-        self.image_shape = image_shape
+        self.image_shape = (512, 512)
         self.patch_shape = patch_shape
         self.batch_size = batch_size
+        self.conv_part_1_shape = (128, 128)
         cropper = LocallySoftRectangularCropper(
             patch_shape=patch_shape,
             hyperparameters={'cutoff': 3, 'batched_window': True},
             kernel=Gaussian())
-        self.rescaling_factor = float(patch_shape[0]) / float(image_shape[0])
-        self.min_scale = 0.24 - 0.05
-        # self.rescaling_factor = 0.0
+        self.rescaling_factor = (float(self.conv_part_1_shape[0]) /
+                                 float(self.patch_shape[0]))
+        self.min_scale = self.rescaling_factor - 0.05
 
         if not activation:
             activation = Tanh()
@@ -69,7 +71,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
             return 0
         if name == 'patch':
             return np.prod(self.patch_shape)
-        if name == 'downn_sampled_input':
+        if name == 'downn_sampled_inputs':
             return np.prod(self.patch_shape)
         return super(LSTMAttention, self).get_dim(name)
 
@@ -83,22 +85,36 @@ class LSTMAttention(BaseRecurrent, Initializable):
         act_2 = tanh(pre_2)
         return act_2
 
-    def apply_conv(self, x):
+    # input shape: B x C x X x Y
+    # output shape: B x 1 x X x Y
+    def rgb2gray(self, rgb):
+        mat = tensor.ones_like(rgb)
+        mat = tensor.concatenate([mat[:, 0:1, :, :] * 0.2989,
+                                  mat[:, 1:2, :, :] * 0.5870,
+                                  mat[:, 2:3, :, :] * 0.1140],
+                                 axis=1)
+        mat = mat.astype('float32')
+        gray = tensor.sum(rgb * mat, axis=1)
+        gray = gray.dimshuffle(0, 'x', 1, 2)
+        return gray
+
+    def apply_conv(self, x, conv_layers):
         out = x
         relu = self.children[3].apply
-        for layer in self.conv_layers:
+        for layer in conv_layers:
             name, _, pool_shape, pool_stride = layer
+            print name
             w = {w.name: w for w in self.conv_ws}[name + '_w']
             b = {b.name: b for b in self.conv_bs}[name + '_b']
-            conv = dnn_conv(out, w)
-            m = conv.mean(0, keepdims=True)
-            s = conv.var(0, keepdims=True)
+            conv = dnn_conv(out, w, border_mode=(1, 1))
+            # m = conv.mean(0, keepdims=True)
+            # s = conv.var(0, keepdims=True)
             # conv = (conv - m) / tensor.sqrt(s + np.float32(1e-8))
             conv = conv + b.dimshuffle('x', 0, 'x', 'x')
             out = relu(conv)
             if pool_shape is not None:
                 out = max_pool_2d(
-                    out, pool_shape, st=pool_stride, ignore_border=True)
+                    input=out, ds=pool_shape, st=pool_stride, ignore_border=True)
         return out
 
     def apply_fc(self, x):
@@ -114,11 +130,41 @@ class LSTMAttention(BaseRecurrent, Initializable):
             elif act == 'lin':
                 act = lambda n: n
             out = tensor.dot(out, w)
-            m = out.mean(0, keepdims=True)
-            s = out.var(0, keepdims=True)
+            # m = out.mean(0, keepdims=True)
+            # s = out.var(0, keepdims=True)
             # out = (out - m) / tensor.sqrt(s + np.float32(1e-8))
             out = act(out + b)
         return out
+
+    # image: B x C x X x Y
+    def down_sampler(self, image):
+        cropper = self.children[1]
+        downn_sampled_inputs = cropper.apply(
+            image,
+            np.array([list(self.image_shape)]),
+            tensor.constant(
+                (self.batch_size *
+                    [[self.image_shape[0] / 2,
+                      self.image_shape[1] / 2]])).astype('float32'),
+            tensor.constant(
+                self.batch_size *
+                [[float(
+                    self.patch_shape[0]) / float(
+                    self.image_shape[0]), ] * 2]).astype('float32'))
+        return downn_sampled_inputs
+
+    # input: B x C x X x Y
+    # output: B x C x X x Y
+    def pre_process(self, x):
+        xx = x.dimshuffle(0, 2, 3, 1)
+        xx = xx.dimshuffle(0, 'x', 1, 2, 3)
+        xx = xx[:, :, :, :, [2, 1, 0]]
+        xx = xx.dimshuffle((0, 1, 4, 2, 3)) * 255
+        xx = xx.reshape((xx.shape[0], xx.shape[1] * xx.shape[2],
+                         xx.shape[3], xx.shape[4]))
+        xx = xx - (
+            np.array([104, 117, 123])[None, :, None, None]).astype('float32')
+        return xx
 
     def _allocate(self):
         self.conv_ws = []
@@ -147,7 +193,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.w_2_mlp = shared_floatx_nans(
             (self.mlp_hidden_dims[0],
                 self.mlp_hidden_dims[1]), name='w_2_mlp')
-        self.W_pre_lstm = shared_floatx_nans((self.dim + 3, 4 * self.dim),
+        self.W_pre_lstm = shared_floatx_nans((101 + 3, 4 * self.dim),
                                              name='W_pre_lstm')
         self.b_pre_lstm = shared_floatx_nans((4 * self.dim,),
                                              name='b_pre_lstm')
@@ -191,11 +237,21 @@ class LSTMAttention(BaseRecurrent, Initializable):
         for biases in self.parameters[4:7] + self.conv_bs + self.fc_bs:
             self.biases_init.initialize(biases, self.rng)
 
+    def test(self, inputs):
+        inputs2 = self.pre_process(inputs[0])
+        conved_part_1 = self.apply_conv(
+            inputs2, conv_layers=self.conv_layers[0:7])
+        conved_part_2 = self.apply_conv(
+            conved_part_1, conv_layers=self.conv_layers[7:])
+        flat_conved_part_2 = conved_part_2.flatten(2)
+        pre_lstm = self.apply_fc(flat_conved_part_2)
+        return pre_lstm
+
     @recurrent(sequences=['inputs', 'mask'],
                states=['states', 'cells', 'location', 'scale'],
                contexts=[],
                outputs=['states', 'cells', 'location', 'scale',
-                        'patch', 'downn_sampled_input'])
+                        'patch', 'downn_sampled_inputs', 'conved_part_1', 'conved_part_2', 'pre_lstm'])
     def apply(self, inputs, states, location, scale, cells, mask=None):
         def slice_last(x, no):
             return x[:, no * self.dim: (no + 1) * self.dim]
@@ -203,38 +259,54 @@ class LSTMAttention(BaseRecurrent, Initializable):
         nonlinearity = self.children[0].apply
         cropper = self.children[1]
 
-        downn_sampled_input = cropper.apply(
-            inputs.reshape((self.batch_size, 1,) + self.image_shape),
-            np.array([list(self.image_shape)]),
-            tensor.constant(
-                (self.batch_size *
-                    [[self.image_shape[0] / 2,
-                     self.image_shape[1] / 2]])).astype('float32'),
-            tensor.constant(self.batch_size *
-                            [[self.rescaling_factor, ] * 2]).astype('float32'))
-        flat_downn_sampled_input = downn_sampled_input.flatten(ndim=2)
+        # inputs shape:  B x C x X x Y
+        # outputs shape: B x C x X x Y
+        inputs_normal = self.pre_process(inputs)
 
-        mlp_output = self.apply_attention_mlp(tensor.concatenate(
-            [flat_downn_sampled_input, location, scale, states], axis=1))
+        # inputs shape:  B x C x X x Y
+        # outputs shape: B x C' x X' x Y'
+        conved_part_1 = self.apply_conv(
+            inputs_normal, conv_layers=self.conv_layers[0:7])
+
+        # inputs shape:  B x C x X x Y
+        # outputs shape: B x 1 x X x Y
+        gray_scale_inputs = self.rgb2gray(inputs_normal)
+
+        # inputs shape:  B x 1 x X x Y
+        # outputs shape: B x 1 x X' x Y'
+        downn_sampled_inputs = self.down_sampler(gray_scale_inputs)
+
+        # shape: B x F
+        flat_downn_sampled_inputs = downn_sampled_inputs.flatten(ndim=2)
+
+        # inputs shape:  B x F'
+        # outputs shape: B x 3
+        mlp_output = self.apply_attention_mlp(
+            tensor.concatenate(
+                [flat_downn_sampled_inputs,
+                 location,
+                 scale,
+                 states], axis=1))
         location = mlp_output[:, 0:2]
         location.name = 'location'
         scale = mlp_output[:, 2:3]
         scale.name = 'scale'
 
+        # inputs shape:  B x C' x X' x Y'
+        # outputs shape: B x C' x X'' x Y''
         patch = cropper.apply(
-            inputs.reshape((self.batch_size, 1,) + self.image_shape),
-            np.array([list(self.image_shape)]),
-            (location + 1) * self.image_shape[0] / 2,
+            conved_part_1,
+            np.array([list(self.conv_part_1_shape)]),
+            (location + 1) * self.conv_part_1_shape[0] / 2,
             # use the same scale for both x and y
             tensor.concatenate([
                 scale + 1 + self.min_scale,
                 scale + 1 + self.min_scale], axis=1))
 
-        # It is a nice name, isn't it?
-        # B x C x X x Y
-        conved_patch = self.apply_conv(patch)
-        flat_conved_patch = conved_patch.flatten(2)
-        pre_lstm = self.apply_fc(flat_conved_patch)
+        conved_part_2 = self.apply_conv(
+            patch, conv_layers=self.conv_layers[7:])
+        flat_conved_part_2 = conved_part_2.flatten(2)
+        pre_lstm = self.apply_fc(flat_conved_part_2)
         pre_lstm = tensor.concatenate(
             [pre_lstm, location, scale], axis=1)
         transformed_pre_lstm = tensor.dot(
@@ -257,7 +329,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
                           (1 - mask[:, None]) * cells)
 
         return (next_states, next_cells, location, scale,
-                patch, downn_sampled_input)
+                patch, downn_sampled_inputs, conved_part_1, conved_part_2, pre_lstm)
 
     @application(outputs=apply.states)
     def initial_states(self, batch_size, *args, **kwargs):
