@@ -1,11 +1,10 @@
 import logging
 import os
-import sys
 import time
 import numpy as np
 import theano.tensor as T
 import theano
-from blocks.algorithms import (GradientDescent, Adam, Momentum,
+from blocks.algorithms import (GradientDescent, Adam,
                                CompositeRule, StepClipping)
 from blocks.extensions import FinishAfter, Printing, ProgressBar
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
@@ -16,11 +15,11 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams, Glorot, visualize_attention, LRDecay
 from utils import plot_curves
-from datasets import get_cmv_v2_64_len10_streams
 from blocks.initialization import Constant
 from blocks.graph import ComputationGraph
 from LSTM_attention_model import LSTMAttention
 from blocks.monitoring import aggregation
+from utils import apply_convnet
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -43,7 +42,7 @@ def setup_model():
                           biases_init=Constant(0))
     model.initialize()
     h, c, location, scale, patch, downn_sampled_input = model.apply(input_)
-    classifier = MLP([Rectifier(), Softmax()], [256, 128, 10],
+    classifier = MLP([Rectifier(), Softmax()], [688, 128, 10],
                      weights_init=Glorot(),
                      biases_init=Constant(0))
     model.h = h
@@ -53,11 +52,17 @@ def setup_model():
     model.downn_sampled_input = downn_sampled_input
     classifier.initialize()
 
-    probabilities = classifier.apply(h[-1])
+    outputs = apply_convnet(model.patch[-1])
+    flatten_conved_patch = outputs['flatten']
+    model.conv_params = outputs['params']
+
+    probabilities = classifier.apply(
+        T.concatenate([h[-1], flatten_conved_patch], axis=1))
     cost = CategoricalCrossEntropy().apply(target, probabilities)
     cost.name = 'CE'
     error_rate = MisclassificationRate().apply(target, probabilities)
     error_rate.name = 'ER'
+    model.error_rate = error_rate
     model.cost = cost
 
     location_5_avg = T.mean(location[5, 0])
@@ -84,7 +89,7 @@ def train(model, lrs, get_streams, batch_size=100, num_epochs=600):
     monitorings = model.monitorings
     # Setting Loggesetr
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/test_' + timestr
+    save_path = 'results/best_cont_conv_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -93,7 +98,7 @@ def train(model, lrs, get_streams, batch_size=100, num_epochs=600):
 
     # Training
     blocks_model = Model(cost)
-    all_params = blocks_model.parameters
+    all_params = blocks_model.parameters + model.conv_params
     print "Number of found parameters:" + str(len(all_params))
     print all_params
 
@@ -171,8 +176,10 @@ def evaluate(model, load_path, plot):
             # '/f_6_.W' --> 'f_6_.W'
             slash_index = param_name.find('/')
             param_name = param_name[slash_index + 1:]
-            assert param.get_value().shape == loaded[param_name].shape
-            param.set_value(loaded[param_name])
+            if param.get_value().shape != loaded[param_name].shape:
+                print "WARNING --> shape mis-match: " + param_name
+            else:
+                param.set_value(loaded[param_name])
 
     if plot:
         train_data_stream, valid_data_stream = get_streams(100)
@@ -263,8 +270,8 @@ if __name__ == "__main__":
         model = setup_model()
         eval_ = False
         if eval_:
-            evaluate(model, 'results/test_2015_11_12_at_20_35/', plot=False)
-            ds, _ = get_streams(100)
+            evaluate(model, 'results/best_v1_len10/', plot=False)
+            _, ds = get_streams(100)
             data = ds.get_epoch_iterator(as_dict=True).next()
             inputs = ComputationGraph(model.patch).inputs
             f = theano.function(inputs,
@@ -287,11 +294,15 @@ if __name__ == "__main__":
             #     plt.imshow(d[0, 0], cmap=plt.gray(), interpolation='nearest')
             #     plt.savefig('res_downn_sampled_input/img_' + str(i) + '.png')
 
+            inputs = ComputationGraph(model.error_rate).inputs
+            f = theano.function(inputs, model.error_rate)
+            print f(data['features'], data['targets'])
+
             for i in range(10):
                 visualize_attention(data['features'][:, i],
                                     (location[:, i] + 1) * image_shape[0] / 2,
                                     scale[:, i] + 1 + 0.24 - 0.05,
                                     image_shape=image_shape, prefix=str(i))
         else:
-            # evaluate(model, 'results/v2_len10_mlp_2015_11_13_at_18_37/', plot=False)
+            evaluate(model, 'results/best_v1_len10/', plot=False)
             train(model, [1e-4, 1e-5], get_streams)

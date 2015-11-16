@@ -16,6 +16,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
     def __init__(self, dim, mlp_hidden_dims, batch_size,
                  image_shape, patch_shape, activation=None, **kwargs):
         super(LSTMAttention, self).__init__(**kwargs)
+        self.dim = dim
         conv_layers = [['conv_1_1', (64, 3, 3, 3), None, None],
                        ['conv_1_2', (64, 64, 3, 3), (2, 2), (1, 1)],
                        ['conv_2_1', (128, 64, 3, 3), None, None],
@@ -37,12 +38,11 @@ class LSTMAttention(BaseRecurrent, Initializable):
                        ['conv_2', (32, 16, 5, 5), None, None],
                        ['conv_3', (48, 32, 3, 3), (2, 2), (2, 2)]]
         fc_layers = [['fc4', (192, 256), 'relu']]
-        # conv_layers = []
-        # fc_layers = [['fc4', (576, 256), 'relu']]
+        conv_layers = []
+        fc_layers = [['fc4', (576, self.dim), 'relu']]
         self.mlp_hidden_dims = mlp_hidden_dims
         self.conv_layers = conv_layers
         self.fc_layers = fc_layers
-        self.dim = dim
         self.image_shape = image_shape
         self.patch_shape = patch_shape
         self.batch_size = batch_size

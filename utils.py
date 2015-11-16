@@ -9,6 +9,8 @@ from blocks.roles import AuxiliaryRole
 from crop import LocallySoftRectangularCropper
 from crop import Gaussian
 from blocks.initialization import NdarrayInitialization
+from theano.tensor.signal.downsample import max_pool_2d
+from theano.sandbox.cuda.dnn import dnn_conv
 
 logger = logging.getLogger('main.utils')
 
@@ -306,3 +308,54 @@ def plot_curves(path, to_be_plotted=['train_categoricalcrossentropy_apply_cost',
 
     pimp(path=None, yaxis=yaxis, title=main_title)
     plt.savefig(path + 'plot_' + main_title + '.png')
+
+
+def shared_normal(rng, shape, mean=0.0, stdev=0.25, name=None):
+    v = np.asarray(mean + rng.standard_normal(shape) * stdev,
+                   dtype=theano.config.floatX)
+    return theano.shared(v, name=name)
+
+
+def shared_zeros(shape, name=None):
+    v = np.zeros(shape, dtype=theano.config.floatX)
+    return theano.shared(v, name=name)
+
+
+def _relu(x):
+    return x * (x > 1E-6)
+
+
+def conv_layer(input_variable, filter_shape, pool_shape,
+               rng=np.random.RandomState(1999),
+               layer_name='', border_mode='valid'):
+    filters = shared_normal(rng, filter_shape, name=layer_name + '_w')
+    biases = shared_zeros(filter_shape[0], name=layer_name + '_b')
+    params = [filters, biases]
+    conv = (dnn_conv(input_variable, filters, border_mode=border_mode) +
+            biases.dimshuffle('x', 0, 'x', 'x'))
+    out = _relu(conv)
+
+    if pool_shape is not None:
+        out = max_pool_2d(out, pool_shape, ignore_border=True)
+    return out, params
+
+
+def apply_convnet(x):
+    # x must be : B x X x Y x C
+    # output_channels, input_channels, kernel_width, kernel_height
+    filters_and_pools = [['conv_1_1', (16, 1, 3, 3), (2, 2)],
+                         ['conv_1_2', (32, 16, 3, 3), None],
+                         ['conv_2_1', (48, 32, 3, 3), (2, 2)]]
+    params = []
+    outputs = {'x': x}
+    out = x
+    for name, filter_shape, pool_shape in filters_and_pools:
+        out, l_params = conv_layer(out, filter_shape, pool_shape,
+                                   layer_name=name)
+        params += l_params
+        outputs[name] = out
+    # B x F
+    out = out.flatten(2)
+    outputs['flatten'] = out
+    outputs['params'] = params
+    return outputs

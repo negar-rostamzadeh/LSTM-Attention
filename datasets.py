@@ -311,7 +311,7 @@ def get_cooking_streams(batch_size):
     return train_datastream, valid_datastream
 
 
-get_cooking_streams(100)
+# get_cooking_streams(100)
 
 
 class HDF5ShuffledScheme(ShuffledScheme):
