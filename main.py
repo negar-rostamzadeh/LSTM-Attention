@@ -107,17 +107,17 @@ def train(model, batch_size, num_epochs=1000):
         to_monitor.name = name + "_norm"
         monitored_variables.append(to_monitor)
 
-    train_data_stream, valid_data_stream = get_cmv_v2_streams(batch_size)
+    train_data_stream, test_data_stream = get_streams(batch_size)
 
     train_monitoring = TrainingDataMonitoring(
         variables=monitored_variables,
         prefix="train",
         after_epoch=True)
 
-    valid_monitoring = DataStreamMonitoring(
+    test_monitoring = DataStreamMonitoring(
         variables=monitored_variables,
-        data_stream=valid_data_stream,
-        prefix="valid",
+        data_stream=test_data_stream,
+        prefix="test",
         after_epoch=True)
 
     main_loop = MainLoop(
@@ -126,9 +126,9 @@ def train(model, batch_size, num_epochs=1000):
         model=blocks_model,
         extensions=[
             train_monitoring,
-            valid_monitoring,
+            test_monitoring,
             FinishAfter(after_n_epochs=num_epochs),
-            SaveParams('valid_misclassificationrate_apply_error_rate',
+            SaveParams('train_misclassificationrate_apply_error_rate',
                        blocks_model, save_path),
             SaveLog(save_path, after_epoch=True),
             ProgressBar(),
