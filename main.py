@@ -15,7 +15,7 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams, Glorot, visualize_attention
 from utils import LRDecay
-from datasets import get_cmv_v2_streams
+from datasets import get_featurelevel_ucf101_streams as get_streams
 from blocks.initialization import Constant
 from blocks.graph import ComputationGraph
 from LSTM_attention_model import LSTMAttention
@@ -24,20 +24,25 @@ floatX = theano.config.floatX
 logger = logging.getLogger('main')
 
 
-def setup_model():
+def setup_model(batch_size):
     # shape: T x B x F
-    input_ = T.tensor3('features')
+    fc = T.tensor3('fc')
+    conv = T.TensorType(broadcastable=5*[False], dtype=theano.config.floatX)('conv')
+    lengths = T.lvector("fc_length")
     # shape: B
     target = T.lvector('targets')
     model = LSTMAttention(dim=256,
                           mlp_hidden_dims=[256, 4],
-                          batch_size=100,
-                          image_shape=(64, 64),
-                          patch_shape=(16, 16),
+                          batch_size=batch_size,
+                          image_shape=(7, 7),
+                          patch_shape=(1, 1),
                           weights_init=Glorot(),
                           biases_init=Constant(0))
     model.initialize()
-    h, c, location, scale = model.apply(input_)
+    h, c, location, scale = model.apply(
+        # time first
+        fc=fc.dimshuffle(1, 0, *range(2, fc.ndim)),
+        conv=conv.dimshuffle(1, 0, *range(2, conv.ndim)))
     classifier = MLP([Rectifier(), Softmax()], [256 * 2, 200, 10],
                      weights_init=Glorot(),
                      biases_init=Constant(0))
@@ -47,34 +52,21 @@ def setup_model():
     model.scale = scale
     classifier.initialize()
 
-    probabilities = classifier.apply(T.concatenate([h[-1], c[-1]], axis=1))
+    last_index = (lengths - 1, T.arange(h.shape[1]))
+    probabilities = classifier.apply(T.concatenate([h[last_index], c[last_index]], axis=1))
     cost = CategoricalCrossEntropy().apply(target, probabilities)
     error_rate = MisclassificationRate().apply(target, probabilities)
     model.cost = cost
 
-    location_x_0_avg = T.mean(location[0, :, 0])
-    location_x_0_avg.name = 'location_x_0_avg'
-    location_x_10_avg = T.mean(location[10, :, 0])
-    location_x_10_avg.name = 'location_x_10_avg'
-    location_x_20_avg = T.mean(location[-1, :, 0])
-    location_x_20_avg.name = 'location_x_20_avg'
-
-    scale_x_0_avg = T.mean(scale[0, :, 0])
-    scale_x_0_avg.name = 'scale_x_0_avg'
-    scale_x_10_avg = T.mean(scale[10, :, 0])
-    scale_x_10_avg.name = 'scale_x_10_avg'
-    scale_x_20_avg = T.mean(scale[-1, :, 0])
-    scale_x_20_avg.name = 'scale_x_20_avg'
-
-    monitorings = [error_rate,
-                   location_x_0_avg, location_x_10_avg, location_x_20_avg,
-                   scale_x_0_avg, scale_x_10_avg, scale_x_20_avg]
+    monitorings = [error_rate]
+    for j, name in enumerate("yx"):
+        monitorings.append(location[:, :, j].mean().copy(name="location[%s].mean" % name))
     model.monitorings = monitorings
 
     return model
 
 
-def train(model, batch_size=100, num_epochs=1000):
+def train(model, batch_size, num_epochs=1000):
     cost = model.cost
     monitorings = model.monitorings
     # Setting Loggesetr
@@ -95,7 +87,7 @@ def train(model, batch_size=100, num_epochs=1000):
     clipping = StepClipping(threshold=np.cast[floatX](10))
 
     adam = Adam(learning_rate=model.lr_var)
-    step_rule = CompositeRule([adam, clipping])
+    step_rule = CompositeRule([clipping, adam])
     training_algorithm = GradientDescent(
         cost=cost, parameters=all_params,
         step_rule=step_rule)
@@ -148,7 +140,7 @@ def train(model, batch_size=100, num_epochs=1000):
     main_loop.run()
 
 
-def evaluate(model, load_path):
+def evaluate(model, load_path, batch_size):
     with open(load_path + '/trained_params_best.npz') as f:
         loaded = np.load(f)
         blocks_model = Model(model.cost)
@@ -162,7 +154,7 @@ def evaluate(model, load_path):
                     assert param.get_value().shape == loaded[param_name].shape
                     param.set_value(loaded[param_name])
 
-    train_data_stream, valid_data_stream = get_cmv_v2_streams(100)
+    train_data_stream, test_data_stream = get_streams(batch_size)
     # T x B x F
     data = train_data_stream.get_epoch_iterator().next()
     cg = ComputationGraph(model.cost)
@@ -176,6 +168,7 @@ def evaluate(model, load_path):
 
 if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
-        model = setup_model()
-        # evaluate(model, 'results/test_cont_adam_lr_m5_2015_10_18_at_15_35')
-        train(model)
+        batch_size = 32
+        model = setup_model(batch_size=batch_size)
+        # evaluate(model, 'results/test_cont_adam_lr_m5_2015_10_18_at_15_35', batch_size)
+        train(model, batch_size=batch_size)

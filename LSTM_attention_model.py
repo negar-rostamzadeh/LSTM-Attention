@@ -97,10 +97,10 @@ class LSTMAttention(BaseRecurrent, Initializable):
             self.biases_init.initialize(biases, self.rng)
         self.children[1].initialize()
 
-    @recurrent(sequences=['inputs', 'mask'],
+    @recurrent(sequences=['fc', 'conv', 'mask'],
                states=['states', 'cells', 'location', 'scale'],
                contexts=[], outputs=['states', 'cells', 'location', 'scale'])
-    def apply(self, inputs, states, location, scale, cells, mask=None):
+    def apply(self, fc, conv, states, location, scale, cells, mask=None):
         def slice_last(x, no):
             return x[:, no * self.dim: (no + 1) * self.dim]
 
@@ -124,13 +124,12 @@ class LSTMAttention(BaseRecurrent, Initializable):
         scale.name = 'scale'
 
         patch = cropper.apply(
-            inputs.reshape((self.batch_size, 1,) + self.image_shape),
+            conv,
             np.array([list(self.image_shape)]),
             location,
             scale)
 
-        patch = tensor.concatenate([patch.flatten(ndim=2), location, scale],
-                                   axis=1)
+        patch = tensor.concatenate([patch.flatten(ndim=2), fc.flatten(ndim=2), location, scale], axis=1)
         relu = self.children[3]
         transformed_patch = tensor.dot(
             relu.apply(tensor.dot(patch, self.W_patch1) + self.b1),
