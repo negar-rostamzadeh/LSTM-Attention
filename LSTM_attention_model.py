@@ -55,7 +55,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         return super(LSTMAttention, self).get_dim(name)
 
     def _allocate(self):
-        self.W_patch1 = shared_floatx_nans((np.prod(self.patch_shape) + 4,
+        self.W_patch1 = shared_floatx_nans((512 + 4096 + 4,
                                             2 * self.dim),
                                            name='W_patch1')
         self.W_patch2 = shared_floatx_nans((2 * self.dim,
