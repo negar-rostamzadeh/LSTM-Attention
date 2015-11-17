@@ -93,11 +93,10 @@ class LocallySoftRectangularCropper(Brick):
     def apply_inner(self, image, location, scale, a, b):
         slices = [theano.gradient.disconnected_grad(T.arange(a[i], b[i]))
                   for i in xrange(self.n_spatial_dims)]
-        hardcrop = util.subtensor(
-            image,
-            [(T.arange(image.shape[0]), 0),
-             (T.arange(image.shape[1]), 1)]
-             + [(slice, 2 + i) for i, slice in enumerate(slices)])
+        hardcrop = image[
+            np.index_exp[:, :] +
+            tuple(slice(a[i], b[i])
+                  for i in range(self.n_spatial_dims))]
         matrices = self.compute_crop_matrices(location, scale, slices)
         patch = hardcrop
         for axis, matrix in enumerate(matrices):
