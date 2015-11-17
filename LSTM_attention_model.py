@@ -20,7 +20,7 @@ class LSTMAttention(BaseRecurrent, Initializable):
         self.patch_shape = patch_shape
         self.batch_size = batch_size
         non_lins = [Rectifier()] * (len(mlp_hidden_dims) - 1) + [Tanh()]
-        mlp_dims = [np.prod(patch_shape) + dim + 4] + mlp_hidden_dims
+        mlp_dims = [dim + 4] + mlp_hidden_dims
         mlp = MLP(non_lins, mlp_dims,
                   weights_init=self.weights_init,
                   biases_init=self.biases_init,
@@ -108,22 +108,11 @@ class LSTMAttention(BaseRecurrent, Initializable):
         mlp = self.children[1]
         cropper = self.children[2]
 
-        downn_sampled_input = cropper.apply(
-            inputs.reshape((self.batch_size, 1,) + self.image_shape),
-            np.array([list(self.image_shape)]),
-            tensor.constant(
-                (self.batch_size *
-                    [[self.image_shape[0] / 2,
-                     self.image_shape[1] / 2]])).astype('float32'),
-            self.batch_size * tensor.constant(
-                [[self.rescaling_factor, ] * 2]).astype('float32'))
-        downn_sampled_input = downn_sampled_input.flatten(ndim=2)
-
         # rescaling back we want to feed it back to MLP.
         location = (location * 2 / self.image_shape[0]) - 1
         scale = scale - self.min_scale - 1
         mlp_output = mlp.apply(tensor.concatenate(
-            [downn_sampled_input, location, scale, states], axis=1))
+            [location, scale, states], axis=1))
         # To range the location between 0 and image_shape
         location = (mlp_output[:, 0:2] + 1) * self.image_shape[0] / 2
         # Relative location
