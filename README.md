@@ -1,5 +1,5 @@
 # LSTM-Attention on videos
-This repository was built in October 2015 mainly in Blocks (Theano-based Framework developed in MILA by Bart Van Merriënboer et al.)
+This repository was built in October 2015 mainly in [Blocks](https://arxiv.org/abs/1506.00619) (Theano-based Framework developed in MILA by Bart Van Merriënboer et al.)
 The code is not maintained and the work is not presented in any conferences/workshops or arXived. (We don't have any plan to arXiv or submit this work)
 
 # Approach
