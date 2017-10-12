@@ -18,6 +18,7 @@ We tried our approach on the MPII Cooking dataset. It (the attention cropper) wa
 # Some visual results
 ![alt text](img/sample_1.gif)
 ![alt text](img/sample_2.gif)
+Miss-classified to `1`!
 ![alt text](img/sample_3.gif)
 
 # Interesting papers about attention
