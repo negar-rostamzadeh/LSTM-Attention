@@ -1,6 +1,6 @@
 # LSTM-Attention on videos
 This repository was built in October 2015 mainly in [Blocks](https://arxiv.org/abs/1506.00619) (Theano-based Framework developed in MILA by Bart Van Merriënboer et al.)
-The code is not maintained and the work is not presented in any conferences/workshops or arXived. (We don't have any plan to arXiv or submit this work)
+The code is not maintenanced and the work is not presented in any conferences/workshops or arXived. (We don't have any plan to arXiv or submit this work)
 
 # Approach
 Attention models have shown successful outputs on images. This work explores visual attention models on videos via employing a differentiable attention mechanism to apply a two-dimensional convolutional neural network on salient regions of consecutive frames with varying resolutions.
