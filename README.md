@@ -25,8 +25,8 @@ Many interesting papers were released on attention and particularly in "attentio
 Here there are two sample papers on action classification in videos by employing attention:
 
 Spatio-Temporal attention:
-Action Recognition using Visual Attention [a link](https://arxiv.org/abs/1511.04119)
+[Action Recognition using Visual Attention](https://arxiv.org/abs/1511.04119)
 
 Temporal attention:
-End-to-end learning of action detection from frame glimpses in videos [a link](https://www.cv-foundation.org/openaccess/content_cvpr_2016/papers/Yeung_End-To-End_Learning_of_CVPR_2016_paper.pdf)
+[End-to-end learning of action detection from frame glimpses in videos](https://www.cv-foundation.org/openaccess/content_cvpr_2016/papers/Yeung_End-To-End_Learning_of_CVPR_2016_paper.pdf)
  
